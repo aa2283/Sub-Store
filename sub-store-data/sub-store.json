@@ -1,10 +1,9 @@
 {
   "subs": [
     {
-      "name": "NodeTest",
+      "name": "MyNodes",
       "type": "http",
-      "url": "https://raw.githubusercontent.com/freefq/free/master/v2",
-      "ua": "v2ray"
+      "url": "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub"
     }
   ],
   "targets": [
@@ -12,14 +11,7 @@
       "type": "clash",
       "filename": "MySub.yaml",
       "payload": {
-        "subs": ["NodeTest"]
-      }
-    },
-    {
-      "type": "http",
-      "filename": "MySub.txt",
-      "payload": {
-        "subs": ["NodeTest"]
+        "subs": ["MyNodes"] 
       }
     }
   ]
