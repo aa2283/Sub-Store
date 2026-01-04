@@ -19,29 +19,30 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Command Mode)
+      - name: Run Sub-Store (Manual Force Sync)
         run: |
-          # 1. 创建干净的目录
-          rm -rf output && mkdir -p output
+          mkdir -p output
           
-          # 2. 提取脚本并准备配置
+          # 1. 获取核心文件
           docker create --name temp-sub xream/sub-store
           docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
           docker rm temp-sub
-          
-          # 3. 强行把你的 JSON 放在根目录，这是 Sub-Store 的默认搜索位
-          cp sub-store-data/sub-store.json ./sub-store.json
 
-          echo ">>> 启动执行同步..."
+          # 2. 环境清理与配置对齐
+          cp sub-store-data/sub-store.json ./sub-store.json
           
-          # 4. 显式指定数据目录为当前目录 (.)
-          # 显式指定输出目录为 output
-          export SUB_STORE_DATA_DIRECTORY=$(pwd)
-          export SUB_STORE_OUTPUT_DIRECTORY=$(pwd)/output
+          # 3. 终极强行执行命令
+          # 我们不再只用 sync，而是通过设置环境变量和强制路径来确保它必须写出文件
+          echo ">>> 强制同步开始..."
           
-          node ./sub-store.bundle.js sync --backend false
+          SUB_STORE_DATA_DIRECTORY=$(pwd) \
+          SUB_STORE_OUTPUT_DIRECTORY=$(pwd)/output \
+          node ./sub-store.bundle.js sync \
+          --source ./sub-store.json \
+          --target MySub.yaml \
+          --backend false
           
-          echo ">>> 检查结果:"
+          echo ">>> 执行完毕，检查 output 目录内容:"
           ls -la output/
           
           
