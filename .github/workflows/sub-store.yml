@@ -19,53 +19,51 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Fix Encoding & Generate Config)
+      - name: Run Sub-Store (Force Sync via API)
         run: |
           mkdir -p output
           
-          # 1. 强行在 Linux 环境下生成标准的 UTF-8 JSON 文件
-          # 这样可以 100% 避免乱码和编码问题
+          # 1. 生成正确的配置文件
           cat <<EOF > ./sub-store-data/sub-store.json
           {
-            "subs": [
-              {
-                "name": "MyNodes",
-                "type": "http",
-                "url": "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub"
-              }
-            ],
-            "targets": [
-              {
-                "type": "clash",
-                "filename": "config.yaml",
-                "payload": {
-                  "subs": ["MyNodes"],
-                  "options": {
-                    "gen-config": true
-                  }
-                }
-              }
-            ]
+            "subs": [{
+              "name": "MyNodes",
+              "type": "http",
+              "url": "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub"
+            }],
+            "targets": [{
+              "type": "clash",
+              "filename": "config.yaml",
+              "payload": { "subs": ["MyNodes"], "options": { "gen-config": true } }
+            }]
           }
           EOF
 
           # 2. 启动容器
           docker run -d --name substore-svc \
+            -p 3001:3001 \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -e SUB_STORE_DATA_DIRECTORY=/opt/app/data \
             xream/sub-store
           
-          echo ">>> 正在等待同步 (30秒)..."
-          sleep 30
+          echo ">>> 等待服务启动..."
+          sleep 10
           
-          # 3. 打印日志确认是否还报错
+          # 3. 【关键：踢它一脚】通过 API 强制触发所有 Target 同步
+          echo ">>> 正在发送同步指令..."
+          docker exec substore-svc curl -s http://127.0.0.1:3001/api/syncArtifacts
+          
+          echo ">>> 等待处理 (10秒)..."
+          sleep 10
+          
+          # 4. 打印日志看它干活没
           docker logs substore-svc
           
-          # 4. 提取文件
+          # 5. 提取文件
           docker cp substore-svc:/opt/app/data/. ${{ github.workspace }}/output/
           docker stop substore-svc && docker rm substore-svc
           
-          echo ">>> 最终检查 output 目录:"
+          echo ">>> 检查结果:"
           ls -R output/
           
           
