@@ -19,17 +19,19 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store Sync
+      - name: Run Sub-Store (Extract & Run)
         run: |
           mkdir -p output
-          # 强制重写入口为 node，手动指向 bundle 文件并传参 sync
-          docker run --rm \
-            --entrypoint node \
-            -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
-            -v ${{ github.workspace }}/output:/opt/app/output \
-            xream/sub-store \
-            /opt/app/sub-store.bundle.js sync
-          
+          # 1. 临时启动容器并将 bundle 脚本拷贝出来到当前目录
+          docker create --name temp-sub xream/sub-store
+          docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
+          docker rm temp-sub
+
+          # 2. 直接在 GitHub Actions 环境中用 node 运行它
+          # 这样可以 100% 确保 sync 参数生效，且不会启动容器内的后端
+          SUB_STORE_DATA_DIRECTORY=${{ github.workspace }}/sub-store-data \
+          node ./sub-store.bundle.js sync
+
           echo ">>> 转换任务执行完毕"
 
       - name: Git Push Results
