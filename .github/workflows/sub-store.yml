@@ -19,12 +19,12 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Force Sync via API)
+      - name: Run Sub-Store (Pure CLI Mode)
         run: |
           mkdir -p output
           
-          # 1. 生成正确的配置文件
-          cat <<EOF > ./sub-store-data/sub-store.json
+          # 1. 强行生成干净的配置文件
+          cat <<EOF > ./sub-store.json
           {
             "subs": [{
               "name": "MyNodes",
@@ -39,29 +39,17 @@ jobs:
           }
           EOF
 
-          # 2. 启动容器
-          docker run -d --name substore-svc \
-            -p 3001:3001 \
-            -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
-            -e SUB_STORE_DATA_DIRECTORY=/opt/app/data \
-            xream/sub-store
-          
-          echo ">>> 等待服务启动..."
-          sleep 10
-          
-          # 3. 【关键：踢它一脚】通过 API 强制触发所有 Target 同步
-          echo ">>> 正在发送同步指令..."
-          docker exec substore-svc curl -s http://127.0.0.1:3001/api/syncArtifacts
-          
-          echo ">>> 等待处理 (10秒)..."
-          sleep 10
-          
-          # 4. 打印日志看它干活没
-          docker logs substore-svc
-          
-          # 5. 提取文件
-          docker cp substore-svc:/opt/app/data/. ${{ github.workspace }}/output/
-          docker stop substore-svc && docker rm substore-svc
+          # 2. 从容器里把核心脚本偷出来
+          docker create --name temp-sub xream/sub-store
+          docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
+          docker rm temp-sub
+
+          # 3. 【核心】直接用 Node 运行同步命令，不启动服务器
+          # 我们把输出目录强制指向 output 文件夹
+          echo ">>> 正在执行命令行同步..."
+          SUB_STORE_DATA_DIRECTORY=$(pwd) \
+          SUB_STORE_OUTPUT_DIRECTORY=$(pwd)/output \
+          node ./sub-store.bundle.js sync
           
           echo ">>> 检查结果:"
           ls -R output/
