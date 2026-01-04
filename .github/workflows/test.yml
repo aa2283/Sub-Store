@@ -68,4 +68,27 @@ jobs:
           
           sleep 3600
 
+      - name: Download and Save Subscriptions
+        run: |
+          # 1. 等待 Sub-Store 启动
+          echo "等待容器就绪..."
+          sleep 15
           
+          # 2. 创建全小写的 subs 目录
+          mkdir -p subs
+          
+          echo ">>> 正在抓取 ClashMeta 格式..."
+          curl -s "http://127.0.0.1:3001/download/sub?target=ClashMeta" -o subs/all.yaml
+          
+          echo ">>> 正在抓取 URI 格式..."
+          curl -s "http://127.0.0.1:3001/download/sub?target=URI" -o subs/all.txt
+          
+          ls -lh subs/
+          
+      - name: Git Push Changes
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          git add subs/
+          git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push   
