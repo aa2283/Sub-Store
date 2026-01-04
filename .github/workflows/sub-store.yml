@@ -48,32 +48,10 @@ jobs:
           
           
 
-      - name: Push to Another Repo
-        env:
-          TARGET_REPO: "aa2283/v2ray_configs"
+      - name: Git Push Results
         run: |
-          # 1. 使用 PAT 鉴权并克隆目标仓库到 tmp_repo 文件夹
-          git clone "https://x-access-token:${{ secrets.MY_PAT }}@github.com/${{ env.TARGET_REPO }}.git" tmp_repo
-          
-          # 2. 确保目标仓库有 output 目录
-          mkdir -p tmp_repo/output
-          
-          # 3. 将本次生成的所有文件拷贝到目标仓库的 output 目录下
-          # 使用 -f 强制覆盖，如果没有文件则打印警告
-          cp -rf output/* tmp_repo/output/ || echo "Warning: No files found to copy"
-          
-          # 4. 进入目标仓库执行提交
-          cd tmp_repo
-          git config user.email "actions@github.com"
-          git config user.name "Sub-Store Bot"
-          
-          # 添加所有更改
-          git add .
-          
-          # 检查是否有内容变更，避免空提交报错
-          if [ -n "$(git status --porcelain)" ]; then
-            git commit -m "Auto Update Subscriptions: $(date +'%Y-%m-%d %H:%M')"
-            git push origin main # 如果目标仓库主分支是 master，请改为 master
-          else
-            echo "No changes detected, skipping push."
-          fi
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          git add output/   # 这样会把文件夹下所有新生成的文件都包进去
+          git commit -m "Auto Update Subscriptions" || exit 0
+          git push
