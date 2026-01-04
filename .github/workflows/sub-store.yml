@@ -1,37 +1,43 @@
-name: Sub-Store Auto Sync
+name: Sub-Store Sync (File Mode)
 
 on:
-  workflow_dispatch: # 支持手动点击运行
+  workflow_dispatch: # 支持手动运行
+  push:
+    paths:
+      - 'sub-store-data/sub-store.json' # 当你修改了 JSON 文件时自动触发转换
   schedule:
-    - cron: '0 23 * * *' # 每天凌晨运行
+    - cron: '0 22 * * *' # 每天北京时间早晨 6 点自动更新
 
 jobs:
-  build:
+  sync:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    # 给权限以便自动 git push 结果
+    permissions:
+      contents: write
 
-      - name: Prepare Sub-Store Environment
-        run: |
-          mkdir -p sub-store-data
-          # 将 Secret 中的 JSON 写入文件
-          echo '${{ secrets.SUB_STORE_JSON }}' > sub-store-data/sub-store.json
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Run Sub-Store Sync
         run: |
-          # 运行 Sub-Store CLI 进行同步和转换
+          # 1. 确保输出目录存在
+          mkdir -p output
+          
+          # 2. 运行 Docker，直接挂载你仓库里的数据目录
+          # Sub-Store CLI 会自动寻找挂载目录下的 sub-store.json
           docker run --rm \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
+            -v ${{ github.workspace }}/output:/opt/app/output \
             xream/sub-store \
             node /opt/app/sub-store-cli.js sync
           
-          # 列出生成的文件（确认是否生成了结果）
-          ls -R sub-store-data/
+          echo ">>> 转换任务执行完毕"
 
-      - name: Upload Results
-        # 这里你可以选择推送到仓库，或者直接作为 Artifact 下载
-        uses: actions/upload-artifact@v4
-        with:
-          name: sub-store-output
-          path: sub-store-data/
+      - name: Git Push Results
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          git add output/*.yaml output/*.txt || true # 假设你生成的是这些格式
+          git commit -m "Auto sync subscriptions: $(date '+%Y-%m-%d %H:%M:%S')" || exit 0
+          git push
