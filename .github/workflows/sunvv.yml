@@ -1,0 +1,8 @@
+- name: Diagnostic (检查内置命令)
+        run: |
+          # 1. 查看环境变量中 PATH 下的文件
+          docker run --rm xream/sub-store ls /usr/local/bin
+          # 2. 查看容器默认的工作目录
+          docker run --rm xream/sub-store pwd
+          # 3. 查看当前目录下的文件（确认 CLI 入口名）
+          docker run --rm xream/sub-store ls -F
