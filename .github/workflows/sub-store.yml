@@ -22,13 +22,13 @@ jobs:
       - name: Run Sub-Store Sync
         run: |
           mkdir -p output
-          # 强制指定后端只作为 API 运行，并调用内置命令
+          # 强制重写入口为 node，手动指向 bundle 文件并传参 sync
           docker run --rm \
+            --entrypoint node \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -v ${{ github.workspace }}/output:/opt/app/output \
-            -e SUB_STORE_BACKEND_API_ONLY=true \
             xream/sub-store \
-            sub-store sync
+            /opt/app/sub-store.bundle.js sync
           
           echo ">>> 转换任务执行完毕"
 
