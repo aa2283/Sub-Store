@@ -1,28 +1,28 @@
-name: Sub-Store Sync and Debug 测试
+name: Sub-Store 自动同步与调试
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 手动触发运行
 
 jobs:
   build-and-debug:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: 1. 检出代码
         uses: actions/checkout@v4
 
-      - name: Launch Sub-Store
+      - name: 2. 启动 Sub-Store 服务
         run: |
-          # 后台启动容器
+          # 后台启动 Docker 容器，映射 3000 和 3001 端口
           docker run -d --name substore-svc \
             -p 3000:3000 \
             -p 3001:3001 \
             xream/sub-store
-          echo "等待容器启动 (20s)..."
+          echo "正在等待容器初始化 (20秒)..."
           sleep 20
 
-      - name: Download and Save Subscriptions (先执行保存)
+      - name: 3. 抓取订阅内容
         run: |
-          # 1. 创建全小写的 subs 目录
+          # 创建存放订阅的小写目录
           mkdir -p subs
           
           echo ">>> 正在抓取 ClashMeta 格式..."
@@ -31,25 +31,38 @@ jobs:
           echo ">>> 正在抓取 URI 格式..."
           curl -s "http://127.0.0.1:3001/download/sub?target=URI" -o subs/all.txt
           
-          # 检查文件是否抓取成功（防止空文件）
+          # 终端显示抓取结果摘要
           ls -lh subs/
 
-      - name: Git Push Changes
+      - name: 4. 推送更新到 GitHub 仓库
+        env:
+          # 调用您在 Secrets 中设置的 MY_PAT
+          TOKEN: ${{ secrets.MY_PAT }}
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Action"
+          
+          # 构造带 Token 的远程仓库地址，确保拥有写入权限
+          REMOTE_REPO="https://${TOKEN}@github.com/${{ github.repository }}.git"
+          
           git add subs/
-          git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          git push
+          
+          # 检查是否有内容变化，防止空 commit 报错
+          if git diff --staged --quiet; then
+            echo "内容未发生变化，跳过提交。"
+          else
+            git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')"
+            # 推送到当前分支
+            git push "${REMOTE_REPO}" HEAD:${{ github.ref_name }}
+          fi
 
-      - name: Setup Cloudflare Debug Tunnels (最后开启调试)
+      - name: 5. 开启 Cloudflare 远程调试隧道 (可选)
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
 
-          # 启动前端隧道 (3001)
+          # 启动双隧道映射：前端 3001，后端 3000
           ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log &
-          # 启动后端隧道 (3000)
           ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log &
           
           sleep 10
@@ -57,13 +70,14 @@ jobs:
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
           
           echo "========================================================="
-          echo "✅ 自动化同步已完成！文件已推送到 GitHub。"
+          echo "✅ 订阅文件同步成功！已推送到仓库 subs/ 文件夹。"
           echo "---------------------------------------------------------"
-          echo "🌐 前端入口: $UI_URL"
-          echo "🔗 后端 API: $API_URL"
-          echo "👉 提示: 进入前端后，请在设置中将后端地址改为上面的 API 链接。"
+          echo "🌐 前端网页 (UI): $UI_URL"
+          echo "🔗 后端接口 (API): $API_URL"
+          echo "👉 操作提示: 如果需要手动修改配置，请进入网页后，"
+          echo "   在『设置』中将后端地址修改为上方的 API 链接。"
           echo "========================================================="
           
-          # 此处保持运行 15 分钟供你查看，时间到后会自动结束
-          echo "调试模式保持 15 分钟..."
+          # 保持运行 15 分钟，方便你进入网页查看或修改
+          echo "虚拟机将在 15 分钟后自动关闭。"
           sleep 900
