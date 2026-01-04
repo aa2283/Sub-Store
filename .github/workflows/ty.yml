@@ -26,9 +26,9 @@ jobs:
         run: |
           mkdir -p subs
           echo ">>> 正在抓取 ClashMeta 格式..."
-          curl -s "http://127.0.0.1:3001/download/sub?target=ClashMeta" -o subs/all.yaml
+          curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/all.yaml
           echo ">>> 正在抓取 URI 格式..."
-          curl -s "http://127.0.0.1:3001/download/sub?target=URI" -o subs/all.txt
+          curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/all.txt
           ls -lh subs/
 
       - name: 4. 推送更新到 GitHub 仓库
