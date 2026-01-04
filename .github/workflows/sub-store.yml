@@ -19,28 +19,31 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Manual Config)
+      - name: Run Sub-Store (via API)
         run: |
           mkdir -p output
-          docker create --name temp-sub xream/sub-store
-          docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
-          docker rm temp-sub
-
-          # 确保根目录有配置文件
+          # 1. 后台启动 Sub-Store (不加 sync，让它正常启动)
+          # 使用 --data-directory 确保它能读到根目录的配置
           cp sub-store-data/sub-store.json ./sub-store.json
-
-          echo ">>> 启动强制同步模式..."
           
-          # 使用绝对路径执行，并强制关闭后端
-          SUB_STORE_DATA_DIRECTORY=$(pwd) \
-          SUB_STORE_OUTPUT_DIRECTORY=$(pwd)/output \
-          timeout 30s node ./sub-store.bundle.js sync --backend false || true
+          echo ">>> 正在后台启动服务端..."
+          SUB_STORE_DATA_DIRECTORY=$(pwd) node ./sub-store.bundle.js &
           
-          echo ">>> 检查根目录文件 (确认 sub-store.json 是否还在):"
-          ls -l sub-store.json
+          # 2. 等待服务端就绪 (等待 10 秒)
+          sleep 10
           
-          echo ">>> 检查 output 目录内容 (核心目标):"
-          ls -la output/
+          echo ">>> 正在通过 API 触发同步..."
+          # 调用内部同步 API，强制存盘
+          curl -X POST "http://127.0.0.1:3000/api/sync" || echo "API 触发失败，尝试备用方案"
+          
+          # 3. 给一点点时间让它写文件
+          sleep 5
+          
+          echo ">>> 检查生成情况:"
+          ls -la output/ || echo "Output 文件夹依然为空"
+          
+          # 4. 杀死后台进程，准备上传
+          pkill -f node || true
           
           
 
