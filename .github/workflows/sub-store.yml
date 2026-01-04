@@ -19,17 +19,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store Sync
+      - name: Debug Run
         run: |
-          mkdir -p output
-          # 1. 明确设置环境变量 SUB_STORE_CMD 为 sync
-          # 2. 并在命令末尾再次输入 sync
+          # 加上 --entrypoint 强制重置启动命令
           docker run --rm \
+            --entrypoint node \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -v ${{ github.workspace }}/output:/opt/app/output \
-            -e SUB_STORE_CMD=sync \
             xream/sub-store \
-            node /opt/app/sub-store.bundle.js sync
+            /opt/app/sub-store.bundle.js sync
           
           echo ">>> 转换任务执行完毕"
 
