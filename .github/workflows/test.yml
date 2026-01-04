@@ -1,57 +1,69 @@
-name: Long-Time Debugger
+name: Sub-Store Full Stack Debugger
 
 on:
-  workflow_dispatch: # 手动触发
+  workflow_dispatch:
 
 jobs:
   debug-session:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v3
-
       - name: Launch Sub-Store
         run: |
-          # 启动容器并映射 3001 前端端口
+          # 启动容器
+          # 我们把前端和后端端口都映射出来
           docker run -d --name substore-svc \
+            -p 3000:3000 \
             -p 3001:3001 \
             xream/sub-store
-          
-          echo "等待容器初始化..."
           sleep 5
 
-      - name: Setup Cloudflare Quick Tunnel
+      - name: Setup Cloudflare Double Tunnel
         run: |
-          # 下载 Cloudflared
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
 
-          # 启动隧道映射到 3001 端口，日志输出到 tunnel.log
-          # 不使用 Token，直接创建快速隧道
+          # 创建配置文件来同时映射两个端口
+          cat <<EOF > config.yml
+          tunnel: debug-tunnel
+          credentials-file: /home/runner/.cloudflared/debug.json
+          ingress:
+            - hostname: substore-api.trycloudflare.com
+              service: http://localhost:3000
+            - hostname: substore-ui.trycloudflare.com
+              service: http://localhost:3001
+            - service: http_status:404
+          EOF
+
+          # 其实 Quick Tunnel 有个更简单的黑科技：
+          # 我们直接把整个 3001 端口发出去，
+          # 然后在网页里手动修改后端地址。
+          
           ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log &
           
-          # 循环检查日志，直到域名生成
-          echo "等待 Cloudflare 生成公网域名..."
-          ITER=0
-          while [ $ITER -lt 10 ]; do
-            TUNNEL_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
-            if [ -n "$TUNNEL_URL" ]; then
-              echo "========================================================="
-              echo "✅ 你的 Sub-Store 已经成功发射到公网！"
-              echo "🔗 访问地址: $TUNNEL_URL"
-              echo "========================================================="
-              break
-            fi
-            sleep 2
-            ITER=$((ITER+1))
-          done
+          sleep 10
+          TUNNEL_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
+          
+          echo "========================================================="
+          echo "🚀 第一步：访问前端入口："
+          echo "$TUNNEL_URL"
+          echo ""
+          echo "🚀 第二步：由于后端(3000)没在同一个域名，请进入网页后："
+          echo "1. 点击右上角的『设置』(齿轮图标)"
+          echo "2. 在『后端地址』里填入这个（或者是让它保持默认但要确保连通性）"
+          echo "   由于 Quick Tunnel 限制，最稳妥的办法是：再开一个隧道给 3000"
+          echo "========================================================="
 
-      - name: Keep Alive for Debugging
+      - name: Launch Backend Tunnel (Key!)
         run: |
-          # 保持运行 1 小时 (3600秒)
-          # 你可以随时在 GitHub 页面点击 "Cancel workflow" 来提前关闭
-          echo ">>> 调试窗口已开启 (有效期 60 分钟) <<<"
-          echo "你可以现在点击上面的链接进入界面操作。"
-          echo "注意：虚拟机销毁后，所有未保存到 sub-store.json 的更改都会丢失。"
+          # 为 3000 端口再开一个独立隧道
+          ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log &
+          sleep 10
+          BACKEND_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
+          echo "========================================================="
+          echo "🔗 你的专属后端地址 (API) 是："
+          echo "$BACKEND_URL"
+          echo "========================================================="
+          echo "👉 请在打开的前端网页里，把设置中的后端地址改为上面这个 URL！"
+          echo "========================================================="
           
           sleep 3600
