@@ -9,10 +9,13 @@
   "targets": [
     {
       "type": "clash",
-      "filename": "MySub.yaml",
+      "filename": "config.yaml", 
       "payload": {
-        "subs": ["MyNodes"] 
+        "subs": ["MyNodes"],
+        "options": {
+          "gen-config": true,
+          "proxies-first": false
+        }
       }
     }
   ]
-}
