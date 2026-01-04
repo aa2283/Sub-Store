@@ -19,23 +19,27 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store
+      - name: Run Sub-Store (Manual Config)
         run: |
           mkdir -p output
           docker create --name temp-sub xream/sub-store
           docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
           docker rm temp-sub
 
-          # 使用 GITHUB_WORKSPACE 变量构建绝对路径
-          # 确保环境变量名完全正确
-          export SUB_STORE_DATA_DIRECTORY="${{ github.workspace }}/sub-store-data"
+          # 确保根目录有配置文件
+          cp sub-store-data/sub-store.json ./sub-store.json
+
+          echo ">>> 启动强制同步模式..."
           
-          echo ">>> 正在同步配置从: $SUB_STORE_DATA_DIRECTORY"
+          # 使用绝对路径执行，并强制关闭后端
+          SUB_STORE_DATA_DIRECTORY=$(pwd) \
+          SUB_STORE_OUTPUT_DIRECTORY=$(pwd)/output \
+          timeout 30s node ./sub-store.bundle.js sync --backend false || true
           
-          # 增加到 40 秒，确保有足够时间写入文件
-          timeout 40s node ./sub-store.bundle.js sync --backend false || true
+          echo ">>> 检查根目录文件 (确认 sub-store.json 是否还在):"
+          ls -l sub-store.json
           
-          echo ">>> 检查 output 目录内容:"
+          echo ">>> 检查 output 目录内容 (核心目标):"
           ls -la output/
           
           
