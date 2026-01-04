@@ -19,22 +19,21 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Debug Mode)
+      - name: Run Sub-Store (Fix Arguments)
         run: |
           mkdir -p output
-          # 1. 提取脚本
           docker create --name temp-sub xream/sub-store
           docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
           docker rm temp-sub
 
-          # 2. 运行同步，增加详细日志和强制超时控制
-          # 我们把 DEBUG 设置为 sub-store:* 来查看内部细节
-          export DEBUG=sub-store:*
+          # 核心改变：
+          # 1. 明确指向数据目录
+          # 2. 加上 --backend false 强行关闭网页服务
+          # 3. 使用 sync 命令
           export SUB_STORE_DATA_DIRECTORY=${{ github.workspace }}/sub-store-data
-          export SUB_STORE_SYNC_TIMEOUT=15000
           
           echo ">>> 启动同步任务..."
-          node ./sub-store.bundle.js sync
+          node ./sub-store.bundle.js sync --backend false
           
           echo ">>> 转换任务执行完毕"
 
