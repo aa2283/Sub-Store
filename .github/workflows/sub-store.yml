@@ -19,21 +19,36 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Internal CLI)
+      - name: Run Sub-Store (Docker API Mode)
         run: |
           mkdir -p output
-          
-          # 1. 运行 Docker，但这次直接调用容器内的 sub-store sync 命令
-          # 我们把当前目录挂载进去，确保它能读到配置并写出到 output
-          docker run --rm \
+          # 1. 以后台模式启动容器，并挂载数据目录
+          docker run -d --name substore-svc \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
-            -v ${{ github.workspace }}/output:/opt/app/output \
-            -e SUB_STORE_DATA_DIRECTORY=/opt/app/data \
-            xream/sub-store \
-            sub-store sync
+            -e SUB_STORE_BACKEND_API_ONLY=true \
+            xream/sub-store
           
-          echo ">>> 检查生成情况:"
-          ls -la output/
+          # 2. 等待容器完全启动
+          echo "等待容器启动..."
+          sleep 20
+          
+          # 3. 打印容器日志，看看它到底在干嘛（方便报错排查）
+          docker logs substore-svc
+          
+          # 4. 尝试多种可能的 API 路径进行同步
+          echo "正在尝试触发同步..."
+          docker exec substore-svc curl -s http://127.0.0.1:3000/api/sync?download=true || true
+          
+          # 5. 【核心】直接从运行中的容器里把生成的文件拷贝出来
+          # Sub-Store 默认会在 /opt/app/data 导出文件
+          echo "正在提取文件..."
+          docker cp substore-svc:/opt/app/data/. ${{ github.workspace }}/output/
+          
+          # 6. 清理
+          docker stop substore-svc && docker rm substore-svc
+          
+          echo ">>> 检查提取结果:"
+          ls -R output/
           
           
 
