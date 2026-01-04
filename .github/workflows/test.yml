@@ -1,3 +1,61 @@
 - name: Check Container IP
         run: |
           docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' substore-svc
+
+name: Sub-Store Sync (File Mode)
+
+on:
+  workflow_dispatch: # 支持手动运行
+  push:
+    paths:
+      - 'sub-store-data/sub-store.json' # 当你修改了 JSON 文件时自动触发转换
+  schedule:
+    - cron: '0 22 * * *' # 每天北京时间早晨 6 点自动更新
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    # 给权限以便自动 git push 结果
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Sub-Store (Wait & Extract)
+        run: |
+          mkdir -p output
+          
+          # 1. 启动容器并挂载
+          docker run -d --name substore-svc \
+            -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
+            -e SUB_STORE_DATA_DIRECTORY=/opt/app/data \
+            xxooyy/sub-store
+          
+          # 2. 给它足够的时间去下载订阅和生成文件
+          echo ">>> 正在等待 Sub-Store 下载节点并生成文件 (30秒)..."
+          sleep 30
+          
+          # 3. 查看日志，确认它是否抓取成功
+          docker logs substore-svc
+          
+          # 4. 【核心】不管它把文件写在哪，把整个 data 目录都搬出来到 output
+          echo ">>> 正在搬运产出物..."
+          docker cp substore-svc:/opt/app/data/. ${{ github.workspace }}/output/
+          
+          # 5. 清理容器
+          docker stop substore-svc && docker rm substore-svc
+          
+          echo ">>> 最终检查 output 目录:"
+          ls -R output/
+          
+          
+
+      - name: Git Push Results
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          git add output/   # 这样会把文件夹下所有新生成的文件都包进去
+          git commit -m "Auto Update Subscriptions" || exit 0
+          git push
