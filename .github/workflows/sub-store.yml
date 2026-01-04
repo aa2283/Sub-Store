@@ -21,16 +21,11 @@ jobs:
 
       - name: Run Sub-Store Sync
         run: |
-          # 1. 确保输出目录存在
-          mkdir -p output
-          
-          # 2. 运行 Docker，直接挂载你仓库里的数据目录
-          # Sub-Store CLI 会自动寻找挂载目录下的 sub-store.json
+          # 运行 Docker，并使用 sh -c 自动寻找 cli 文件运行
           docker run --rm \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
-            -v ${{ github.workspace }}/output:/opt/app/output \
             xream/sub-store \
-            node /opt/app/sub-store-cli.js sync
+            sh -c "node $(find /opt/app -name 'sub-store-cli.js') sync"
           
           echo ">>> 转换任务执行完毕"
 
