@@ -1,0 +1,3 @@
+- name: Check Container IP
+        run: |
+          docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' substore-svc
