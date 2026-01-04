@@ -21,11 +21,13 @@ jobs:
 
       - name: Run Sub-Store Sync
         run: |
-          # 运行 Docker，并使用 sh -c 自动寻找 cli 文件运行
+          mkdir -p output
+          # 这一行命令会自动递归搜索容器内所有的 sub-store-cli.js 并执行第一个找到的
           docker run --rm \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
+            -v ${{ github.workspace }}/output:/opt/app/output \
             xream/sub-store \
-            sh -c "node $(find /opt/app -name 'sub-store-cli.js') sync"
+            sh -c "CLI_FILE=\$(find / -name 'sub-store-cli.js' | head -n 1); if [ -z \"\$CLI_FILE\" ]; then echo '❌ 未找到 CLI 脚本'; exit 1; fi; echo '✅ 找到脚本路径: '\$CLI_FILE; node \$CLI_FILE sync"
           
           echo ">>> 转换任务执行完毕"
 
