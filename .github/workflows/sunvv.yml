@@ -16,29 +16,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Run Sub-Store Sync
-        run: |
-          mkdir -p output
-          # 直接调用 sub-store 脚本（这是新版镜像推荐的内置方式）
-          docker run --rm \
-            -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
-            -v ${{ github.workspace }}/output:/opt/app/output \
-            xream/sub-store \
-            sub-store sync
-          
-          echo ">>> 转换任务执行完毕"
-
-      - name: Git Push Results
-        run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Action"
-          git add output/*.yaml output/*.txt || true # 假设你生成的是这些格式
-          git commit -m "Auto sync subscriptions: $(date '+%Y-%m-%d %H:%M:%S')" || exit 0
-          git push
-          
+      
       - name: Diagnostic (检查内置命令)
         run: |
           # 1. 查看环境变量中 PATH 下的文件
