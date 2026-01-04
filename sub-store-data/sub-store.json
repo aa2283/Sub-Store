@@ -14,6 +14,13 @@
       "payload": {
         "subs": ["NodeTest"]
       }
+    },
+    {
+      "type": "http",
+      "filename": "MySub.txt",
+      "payload": {
+        "subs": ["NodeTest"]
+      }
     }
   ]
 }
