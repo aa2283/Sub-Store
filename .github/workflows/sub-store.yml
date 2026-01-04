@@ -22,12 +22,12 @@ jobs:
       - name: Run Sub-Store Sync
         run: |
           mkdir -p output
-          # 直接调用 sub-store 脚本（这是新版镜像推荐的内置方式）
+          # 使用 node 运行这个 bundle 文件
           docker run --rm \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -v ${{ github.workspace }}/output:/opt/app/output \
             xream/sub-store \
-            sub-store sync
+            node /opt/app/sub-store.bundle.js sync
           
           echo ">>> 转换任务执行完毕"
 
