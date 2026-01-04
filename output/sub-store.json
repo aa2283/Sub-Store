@@ -1,0 +1,32 @@
+{
+  "subs": [
+    {
+      "name": "MyNodes",
+      "type": "http",
+      "url": "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub",
+      "source": "remote"
+    }
+  ],
+  "targets": [
+    {
+      "type": "clash",
+      "filename": "config.yaml",
+      "payload": {
+        "subs": [
+          "MyNodes"
+        ],
+        "options": {
+          "gen-config": true
+        }
+      }
+    }
+  ],
+  "collections": [],
+  "artifacts": [],
+  "rules": [],
+  "files": [],
+  "tokens": [],
+  "schemaVersion": "2.0",
+  "settings": {},
+  "modules": []
+}
