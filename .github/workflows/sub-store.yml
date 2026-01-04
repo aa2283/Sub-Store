@@ -1,0 +1,37 @@
+name: Sub-Store Auto Sync
+
+on:
+  workflow_dispatch: # 支持手动点击运行
+  schedule:
+    - cron: '0 23 * * *' # 每天凌晨运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare Sub-Store Environment
+        run: |
+          mkdir -p sub-store-data
+          # 将 Secret 中的 JSON 写入文件
+          echo '${{ secrets.SUB_STORE_JSON }}' > sub-store-data/sub-store.json
+
+      - name: Run Sub-Store Sync
+        run: |
+          # 运行 Sub-Store CLI 进行同步和转换
+          docker run --rm \
+            -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
+            xream/sub-store \
+            node /opt/app/sub-store-cli.js sync
+          
+          # 列出生成的文件（确认是否生成了结果）
+          ls -R sub-store-data/
+
+      - name: Upload Results
+        # 这里你可以选择推送到仓库，或者直接作为 Artifact 下载
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub-store-output
+          path: sub-store-data/
