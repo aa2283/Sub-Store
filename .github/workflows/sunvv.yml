@@ -1,4 +1,4 @@
-name: Sub-Store Sync (File Mode)
+name: Sub-Sync (File Mode)
 
 on:
   workflow_dispatch: # 支持手动运行
