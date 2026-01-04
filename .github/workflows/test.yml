@@ -74,19 +74,19 @@ jobs:
           echo "等待容器就绪..."
           sleep 15
           
-          # 2. 创建 Subs 目录
-          mkdir -p Subs
+          # 2. 创建 subs 目录
+          mkdir -p subs
           
           echo ">>> 正在抓取 ClashMeta 格式配置..."
-          # 下载 target=ClashMeta 并保存到 Subs/all.yaml
+          # 下载 target=ClashMeta 并保存到 subs/all.yaml
           curl -s "http://127.0.0.1:3001/download/sub?target=ClashMeta" -o Subs/all.yaml
           
           echo ">>> 正在抓取 URI 格式配置..."
-          # 下载 target=URI 并保存到 Subs/all.txt
+          # 下载 target=URI 并保存到 subs/all.txt
           curl -s "http://127.0.0.1:3001/download/sub?target=URI" -o Subs/all.txt
           
           # 3. 检查文件大小，确保不是空文件
-          ls -lh Subs/
+          ls -lh subs/
           
       - name: Git Push Changes
         run: |
