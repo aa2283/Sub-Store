@@ -22,11 +22,12 @@ jobs:
       - name: Run Sub-Store Sync
         run: |
           mkdir -p output
-          # 关键点：末尾必须带 sync 参数，且设置 SUB_STORE_BACKEND_API_ONLY=true 强制其作为工具运行
+          # 1. 明确设置环境变量 SUB_STORE_CMD 为 sync
+          # 2. 并在命令末尾再次输入 sync
           docker run --rm \
-            -e SUB_STORE_BACKEND_API_ONLY=true \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -v ${{ github.workspace }}/output:/opt/app/output \
+            -e SUB_STORE_CMD=sync \
             xream/sub-store \
             node /opt/app/sub-store.bundle.js sync
           
