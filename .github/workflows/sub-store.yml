@@ -19,15 +19,16 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Debug Run
+      - name: Run Sub-Store Sync
         run: |
-          # 加上 --entrypoint 强制重置启动命令
+          mkdir -p output
+          # 强制指定后端只作为 API 运行，并调用内置命令
           docker run --rm \
-            --entrypoint node \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -v ${{ github.workspace }}/output:/opt/app/output \
+            -e SUB_STORE_BACKEND_API_ONLY=true \
             xream/sub-store \
-            /opt/app/sub-store.bundle.js sync
+            sub-store sync
           
           echo ">>> 转换任务执行完毕"
 
