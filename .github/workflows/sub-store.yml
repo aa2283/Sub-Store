@@ -19,24 +19,24 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Force Sync and Kill)
+      - name: Run Sub-Store
         run: |
           mkdir -p output
           docker create --name temp-sub xream/sub-store
           docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
           docker rm temp-sub
 
-          echo ">>> 启动同步任务 (30秒后强制结束并保存结果)..."
+          # 使用 GITHUB_WORKSPACE 变量构建绝对路径
+          # 确保环境变量名完全正确
+          export SUB_STORE_DATA_DIRECTORY="${{ github.workspace }}/sub-store-data"
           
-          # 1. 设置环境变量
-          export SUB_STORE_DATA_DIRECTORY=${{ github.workspace }}/sub-store-data
+          echo ">>> 正在同步配置从: $SUB_STORE_DATA_DIRECTORY"
           
-          # 2. 使用 timeout 命令：30秒后强杀 node 进程
-          # || true 确保即使进程被杀掉，GitHub Action 也不会认为报错而停止
-          timeout 30s node ./sub-store.bundle.js sync --backend false || true
+          # 增加到 40 秒，确保有足够时间写入文件
+          timeout 40s node ./sub-store.bundle.js sync --backend false || true
           
-          echo ">>> 进程已处理，正在检查生成的文件..."
-          ls -R output/
+          echo ">>> 检查 output 目录内容:"
+          ls -la output/
           
           
 
