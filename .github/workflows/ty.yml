@@ -1,0 +1,69 @@
+name: Sub-Store Sync and Debug 测试
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-and-debug:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Launch Sub-Store
+        run: |
+          # 后台启动容器
+          docker run -d --name substore-svc \
+            -p 3000:3000 \
+            -p 3001:3001 \
+            xream/sub-store
+          echo "等待容器启动 (20s)..."
+          sleep 20
+
+      - name: Download and Save Subscriptions (先执行保存)
+        run: |
+          # 1. 创建全小写的 subs 目录
+          mkdir -p subs
+          
+          echo ">>> 正在抓取 ClashMeta 格式..."
+          curl -s "http://127.0.0.1:3001/download/sub?target=ClashMeta" -o subs/all.yaml
+          
+          echo ">>> 正在抓取 URI 格式..."
+          curl -s "http://127.0.0.1:3001/download/sub?target=URI" -o subs/all.txt
+          
+          # 检查文件是否抓取成功（防止空文件）
+          ls -lh subs/
+
+      - name: Git Push Changes
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          git add subs/
+          git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push
+
+      - name: Setup Cloudflare Debug Tunnels (最后开启调试)
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+
+          # 启动前端隧道 (3001)
+          ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log &
+          # 启动后端隧道 (3000)
+          ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log &
+          
+          sleep 10
+          UI_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
+          API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
+          
+          echo "========================================================="
+          echo "✅ 自动化同步已完成！文件已推送到 GitHub。"
+          echo "---------------------------------------------------------"
+          echo "🌐 前端入口: $UI_URL"
+          echo "🔗 后端 API: $API_URL"
+          echo "👉 提示: 进入前端后，请在设置中将后端地址改为上面的 API 链接。"
+          echo "========================================================="
+          
+          # 此处保持运行 15 分钟供你查看，时间到后会自动结束
+          echo "调试模式保持 15 分钟..."
+          sleep 900
