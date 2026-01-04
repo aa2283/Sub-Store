@@ -1,10 +1,19 @@
 {
   "subs": [
     {
-      "name": "GitHub-Test",
+      "name": "NodeTest",
       "type": "http",
-      "url": "https://raw.githubusercontent.com/actionsfz/v2ray/refs/heads/master/all.yaml",
-      "ua": "clash"
+      "url": "https://raw.githubusercontent.com/freefq/free/master/v2",
+      "ua": "v2ray"
+    }
+  ],
+  "targets": [
+    {
+      "type": "clash",
+      "filename": "MySub.yaml",
+      "payload": {
+        "subs": ["NodeTest"]
+      }
     }
   ]
 }
