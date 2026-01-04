@@ -1,48 +1,57 @@
-name: Sub-Store Container Network Debugger
+name: Long-Time Debugger
 
 on:
-  workflow_dispatch: # 手动点击 Actions 运行
+  workflow_dispatch: # 手动触发
 
 jobs:
-  network-test:
+  debug-session:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v3
 
-      - name: Run Sub-Store and Test IP
+      - name: Launch Sub-Store
         run: |
-          # 1. 启动容器（后台运行）
-          echo ">>> 正在启动 Sub-Store 容器..."
-          docker run -d --name substore-test \
-            -p 3000:3000 \
+          # 启动容器并映射 3001 前端端口
+          docker run -d --name substore-svc \
             -p 3001:3001 \
             xream/sub-store
           
-          # 等待容器完全启动
-          sleep 10
+          echo "等待容器初始化..."
+          sleep 5
+
+      - name: Setup Cloudflare Quick Tunnel
+        run: |
+          # 下载 Cloudflared
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+
+          # 启动隧道映射到 3001 端口，日志输出到 tunnel.log
+          # 不使用 Token，直接创建快速隧道
+          ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log &
           
-          # 2. 获取并显示内网 IP
-          CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' substore-test)
-          echo "=========================================="
-          echo "✅ 容器内网 IP 为: $CONTAINER_IP"
-          echo "=========================================="
+          # 循环检查日志，直到域名生成
+          echo "等待 Cloudflare 生成公网域名..."
+          ITER=0
+          while [ $ITER -lt 10 ]; do
+            TUNNEL_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
+            if [ -n "$TUNNEL_URL" ]; then
+              echo "========================================================="
+              echo "✅ 你的 Sub-Store 已经成功发射到公网！"
+              echo "🔗 访问地址: $TUNNEL_URL"
+              echo "========================================================="
+              break
+            fi
+            sleep 2
+            ITER=$((ITER+1))
+          done
+
+      - name: Keep Alive for Debugging
+        run: |
+          # 保持运行 1 小时 (3600秒)
+          # 你可以随时在 GitHub 页面点击 "Cancel workflow" 来提前关闭
+          echo ">>> 调试窗口已开启 (有效期 60 分钟) <<<"
+          echo "你可以现在点击上面的链接进入界面操作。"
+          echo "注意：虚拟机销毁后，所有未保存到 sub-store.json 的更改都会丢失。"
           
-          # 3. 测试本地回环与内网 IP 连通性
-          echo ">>> 测试容器内网端口连通性..."
-          curl -I -m 5 http://127.0.0.1:3000/api/version || echo "❌ 127.0.0.1 访问失败"
-          curl -I -m 5 http://$CONTAINER_IP:3000/api/version || echo "❌ 容器 IP 访问失败"
-          
-          # 4. 【核心测试】测试 GitHub 运行环境能否连接你的机场订阅
-          echo ">>> 测试 GitHub 服务器到机场链接的连通性..."
-          # 这里会自动测试你之前提供的链接
-          curl -I -L -m 15 "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub" \
-            -H "User-Agent: Clash" || echo "❌ 无法连接到机场订阅链接 (可能是 GitHub IP 被封锁)"
-          
-          # 5. 查看容器内部运行日志
-          echo ">>> 正在打印容器实时日志..."
-          docker logs substore-test
-          
-          # 6. 停止并清理
-          docker stop substore-test && docker rm substore-test
-          echo ">>> 测试完成。"
+          sleep 3600
