@@ -1,0 +1,88 @@
+name: Sub-Store Auto Sync
+
+on:
+  workflow_dispatch: # 手动点击运行
+  schedule:
+    - cron: '0 0 * * *' # 每天凌晨自动运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Prepare Sub-Store Environment
+        run: |
+          mkdir -p output
+          # 1. 强行生成干净、无乱码的配置文件
+          cat <<EOF > ./sub-store.json
+          {
+            "subs": [
+              {
+                "name": "MyNodes",
+                "type": "http",
+                "url": "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub"
+              }
+            ],
+            "targets": [
+              {
+                "type": "clash",
+                "filename": "config.yaml",
+                "payload": {
+                  "subs": ["MyNodes"],
+                  "options": {
+                    "gen-config": true
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+          
+          # 2. 从 Docker 镜像中提取核心运行脚本到当前目录
+          docker create --name temp-sub xream/sub-store
+          docker cp temp-sub:/opt/app/sub-store.bundle.js ./sub-store.bundle.js
+          docker rm temp-sub
+
+      - name: Execute Sync Task
+        run: |
+          echo ">>> 启动 Sub-Store CLI 强制同步..."
+          # 显式指定数据目录和输出目录
+          export SUB_STORE_DATA_DIRECTORY=$(pwd)
+          export SUB_STORE_OUTPUT_DIRECTORY=$(pwd)/output
+          
+          # 运行同步命令
+          node ./sub-store.bundle.js sync
+          
+          echo ">>> 检查生成的文件:"
+          ls -R output/
+
+      - name: Push to Another Repo
+        env:
+          TARGET_REPO: "aa2283/v2ray_configs" # 目标仓库
+        run: |
+          # 1. 克隆目标仓库
+          git clone "https://x-access-token:${{ secrets.MY_PAT }}@github.com/${{ env.TARGET_REPO }}.git" tmp_repo
+          
+          # 2. 拷贝生成的文件 (config.yaml, sub-store.json 等)
+          mkdir -p tmp_repo/output
+          cp -rf output/* tmp_repo/output/
+          
+          # 3. 提交并推送
+          cd tmp_repo
+          git config user.email "actions@github.com"
+          git config user.name "Sub-Store Bot"
+          git add .
+          
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "Auto Update Subscriptions: $(date +'%Y-%m-%d %H:%M')"
+            git push origin main || git push origin master
+          else
+            echo "No changes to commit."
+          fi
