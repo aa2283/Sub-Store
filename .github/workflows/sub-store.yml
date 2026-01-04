@@ -19,28 +19,50 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Run Sub-Store (Wait & Extract)
+      - name: Run Sub-Store (Fix Encoding & Generate Config)
         run: |
           mkdir -p output
           
-          # 1. 启动容器并挂载
+          # 1. 强行在 Linux 环境下生成标准的 UTF-8 JSON 文件
+          # 这样可以 100% 避免乱码和编码问题
+          cat <<EOF > ./sub-store-data/sub-store.json
+          {
+            "subs": [
+              {
+                "name": "MyNodes",
+                "type": "http",
+                "url": "https://cw.itao.qzz.io/e2c06fc8-29a8-44ca-b405-2349eab7b7df/sub"
+              }
+            ],
+            "targets": [
+              {
+                "type": "clash",
+                "filename": "config.yaml",
+                "payload": {
+                  "subs": ["MyNodes"],
+                  "options": {
+                    "gen-config": true
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+          # 2. 启动容器
           docker run -d --name substore-svc \
             -v ${{ github.workspace }}/sub-store-data:/opt/app/data \
             -e SUB_STORE_DATA_DIRECTORY=/opt/app/data \
             xream/sub-store
           
-          # 2. 给它足够的时间去下载订阅和生成文件
-          echo ">>> 正在等待 Sub-Store 下载节点并生成文件 (30秒)..."
+          echo ">>> 正在等待同步 (30秒)..."
           sleep 30
           
-          # 3. 查看日志，确认它是否抓取成功
+          # 3. 打印日志确认是否还报错
           docker logs substore-svc
           
-          # 4. 【核心】不管它把文件写在哪，把整个 data 目录都搬出来到 output
-          echo ">>> 正在搬运产出物..."
+          # 4. 提取文件
           docker cp substore-svc:/opt/app/data/. ${{ github.workspace }}/output/
-          
-          # 5. 清理容器
           docker stop substore-svc && docker rm substore-svc
           
           echo ">>> 最终检查 output 目录:"
