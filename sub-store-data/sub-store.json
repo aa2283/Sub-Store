@@ -3,7 +3,7 @@
     {
       "name": "GitHub-Test",
       "type": "http",
-      "url": "https://raw.githubusercontent.com/ACL4SSR/ACL4SSR/master/Clash/Providers/ProxyLite.yaml",
+      "url": "https://raw.githubusercontent.com/actionsfz/v2ray/refs/heads/master/all.yaml",
       "ua": "clash"
     }
   ]
