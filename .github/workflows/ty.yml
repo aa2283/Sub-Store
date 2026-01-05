@@ -28,7 +28,7 @@ jobs:
           chmod +x cloudflared
           
           # 启动隧道
-          nohup ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile backend.log 2>&1 &
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
           
           # 等待日志生成
           sleep 15
@@ -50,12 +50,12 @@ jobs:
             echo ">>> 第 $i 次检查..."
             
             # 尝试获取订阅名，并防止 jq 报错导致脚本退出
-            RAW_DATA=$(curl -s http://127.0.0.1:3001/api/utils/list?type=sub || echo "")
+            RAW_DATA=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub || echo "")
             SUB_NAME=$(echo "$RAW_DATA" | jq -r '.[0].name' 2>/dev/null || echo "null")
             
             if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ] && [ "$SUB_NAME" != "" ]; then
               mkdir -p subs
-              curl -s "http://127.0.0.1:3001/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
+              curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
               
               # 对比逻辑
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
