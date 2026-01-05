@@ -1,68 +1,64 @@
-name: Sub-Store 自动同步与调试
+name: Sub-Store 独立同步与长效调试
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-and-debug:
+  build:
     runs-on: ubuntu-latest
     steps:
       - name: 1. 检出代码
         uses: actions/checkout@v4
         with:
-          # 关键：在这里就绑定你的 PAT，后续 push 就不会报 403 了
           token: ${{ secrets.MY_PAT }}
 
-      - name: 2. 启动 Sub-Store 服务
+      - name: 2. 启动 Sub-Store 后端
         run: |
+          mkdir -p sub-store-data
           docker run -d --name substore-svc \
-            -p 3000:3000 \
-            -p 3001:3001 \
-            xream/sub-store
-          echo "等待容器初始化 (20秒)..."
+            -v $(pwd)/sub-store-data:/opt/app/data \
+            -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 20
 
-      - name: 3. 抓取订阅内容
-        run: |
-          mkdir -p subs
-          echo ">>> 正在抓取 ClashMeta 格式..."
-          curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/all.yaml
-          echo ">>> 正在抓取 URI 格式..."
-          curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/all.txt
-          ls -lh subs/
-
-      - name: 4. 推送更新到 GitHub 仓库
-        run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Action"
-          
-          git add subs/
-          
-          if git diff --staged --quiet; then
-            echo "内容未发生变化，跳过提交。"
-          else
-            git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')"
-            # 因为 checkout 时用了 PAT，这里直接 push 即可
-            git push origin HEAD:${{ github.ref_name }}
-          fi
-
-      - name: 5. 开启 Cloudflare 远程调试隧道
+      - name: 3. 【核心】开启长效隧道 (后台运行)
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-
-          ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log &
-          ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log &
           
-          sleep 10
+          # 使用 nohup 确保隧道在后台运行，不会阻塞后续步骤
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log 2>&1 &
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
+          
+          sleep 15
           UI_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
           
           echo "========================================================="
-          echo "✅ 订阅文件同步成功！"
-          echo "🌐 前端网页 (UI): $UI_URL"
-          echo "🔗 后端接口 (API): $API_URL"
+          echo "🌐 调试 UI 地址: $UI_URL"
+          echo "🔗 调试 API 地址: $API_URL"
+          echo "⚠️ 注意：即便你关闭网页，后台同步仍会继续。"
           echo "========================================================="
-          
-          echo "虚拟机将在 15 分钟后自动关闭。"
-          sleep 900
+
+      - name: 4. 执行自动同步任务
+        run: |
+          mkdir -p subs
+          # 这里访问的是本地 127.0.0.1，完全不受外部隧道状态影响
+          curl -s "http://127.0.0.1:3000/download/GitHub-Test?target=ClashMeta" -o subs/all.yaml
+          curl -s "http://127.0.0.1:3000/download/GitHub-Test?target=URI" -o subs/all.txt
+          ls -lh subs/
+
+      - name: 5. 立即推送文件至仓库
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Action"
+          git add subs/
+          git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          # 使用 MY_PAT 强制推送
+          git push https://${{ secrets.MY_PAT }}@github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }}
+
+      - name: 6. 维持工作流运行 (挂机调试)
+        run: |
+          echo ">>> 同步已完成，现在进入挂机调试模式。"
+          echo ">>> 你可以在未来的 1 小时内随时进入上面的 UI 链接修改配置。"
+          # 保持虚拟机运行 60 分钟
+          sleep 3600
