@@ -21,54 +21,56 @@ jobs:
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 15
 
-      - name: 3. 开启调试隧道 (仅供进入网页)
+      - name: 3. 建立隧道 (注意：映射后端 3001 端口)
         run: |
-          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
-          chmod +x cloudflared
+          # 如果你想在网页端调试，隧道应该映射后端真正的 API 端口
           nohup ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile backend.log 2>&1 &
           sleep 10
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
           echo "========================================================="
-          echo "🛠️ 调试入口 (改完保存即可):"
+          echo "🔗 前端管理入口 (API 已指向 3001):"
           echo "👉 https://sub-store.vercel.app/?api=$API_URL"
           echo "========================================================="
 
       - name: 4. 实时内网抓取与推送循环
         env:
-          MY_TOKEN: ${{ secrets.MY_PAT }} # 确保你已经在 Secrets 里设置了这个名字
+          MY_TOKEN: ${{ secrets.MY_PAT }} # 必须包含这一行
         run: |
           for i in {1..180}
           do
-            # 激活后端
+            echo ">>> 第 $i 次检查 (每分钟一次)..."
+            
+            # 1. 激活后端 (尝试访问 3001 端口)
             curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3001"
             
-            # 获取订阅名称
+            # 2. 获取订阅名称
             SUB_NAME=$(curl -s http://127.0.0.1:3001/api/utils/list?type=sub | jq -r '.[0].name')
             
             if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
               mkdir -p subs
+              
+              # 3. 抓取最新内容到临时文件
               curl -s "http://127.0.0.1:3001/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
               
-              # 检查是否有变动
+              # 4. 对比是否有变动
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
-                echo "✅ 发现变动，正在同步至两个仓库..."
+                echo "📢 发现变动，正在执行推送流程..."
                 cp subs/new_all.yaml subs/all.yaml
                 
-                # 备份 sub-store.json (存入当前 Sub-Store 仓库)
+                # 备份 sub-store.json (确保设置不丢失)
                 docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
                 
-                # 配置 Git 信息
+                # 配置 Git
                 git config --local user.email "actions@github.com"
                 git config --local user.name "GitHub Action"
 
-                # --- 1. 推送配置备份到当前仓库 ---
+                # --- 推送到当前 Sub-Store 仓库 (存档设置) ---
                 git add sub-store-data/sub-store.json subs/all.yaml
-                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo "无需提交"
+                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo "无需存档"
                 git push origin main || echo "当前仓库推送失败"
 
-                # --- 2. 关键：跨仓库推送到 v2ray_configs ---
-                # 使用你提供的 MY_PAT 进行鉴权
-                rm -rf target_repo # 确保清理旧数据
+                # --- 推送到 v2ray_configs 仓库 (供客户端使用) ---
+                rm -rf target_repo
                 git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo
                 mkdir -p target_repo/subs
                 cp -f subs/all.yaml target_repo/subs/all.yaml
@@ -77,12 +79,17 @@ jobs:
                 git config --local user.email "actions@github.com"
                 git config --local user.name "GitHub Action"
                 git add .
-                git commit -m "内网实时同步: $(date +'%H:%M:%S')" || echo "无变化"
+                git commit -m "内网实时同步 (3001): $(date +'%H:%M:%S')" || echo "无变化"
                 git push origin main
                 cd ..
                 
-                echo "🚀 全部仓库已同步完成！"
+                echo "✅ 同步成功！仓库已更新。"
+              else
+                echo "😴 内容未改变，跳过推送。"
               fi
+            else
+              echo "⚠️ 未发现有效订阅，请检查网页端 (3001端口) 是否已保存订阅。"
             fi
+            
             sleep 60
           done
