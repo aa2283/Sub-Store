@@ -30,19 +30,19 @@ jobs:
           echo "等待容器初始化..."
           sleep 20
 
-      - name: 3. 开启 Cloudflare 调试隧道
+      - name: 3. 开启隧道 (自指向访问模式)
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
           
-          # 隧道指向 Docker 映射出来的 3000 端口
+          # 启动隧道对准 3000
           nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
           
           sleep 15
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
           echo "========================================================="
-          echo "🔗 Sub-Store 管理后台 (点击此链接进入):"
-          echo "👉 https://sub-store.vercel.app/?api=$API_URL"
+          echo "✅ 纯本地管理入口 (无需 Vercel):"
+          echo "👉 $API_URL/?api=$API_URL"
           echo "========================================================="
 
       - name: 4. 实时捕获与双仓库推送
@@ -54,7 +54,7 @@ jobs:
             echo ">>> 第 $i 分钟检查循环..."
 
             # 【核心步骤】自动唤醒后端加载配置
-            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
+            curl -s -o /dev/null "http://127.0.0.1:3000/?api=http://127.0.0.1:3000"
             sleep 3
 
             # 抓取 Clash 和 URI 两种格式 (假设订阅名为 sub)
