@@ -48,21 +48,30 @@ jobs:
           for i in {1..180}
           do
             echo ">>> 第 $i 次检查..."
+            
+            # 1. 探测后端状态 (增加调试输出)
+            RAW_SUBS=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub || echo "[]")
+            RAW_COLLECTIONS=$(curl -s http://127.0.0.1:3000/api/utils/list?type=collection || echo "[]")
+            
+            # 2. 自动选一个不为空的订阅名 (优先组合订阅，其次普通订阅)
+            SUB_NAME=$(echo "$RAW_COLLECTIONS" | jq -r '.[0].name' 2>/dev/null || echo "null")
+            DOWNLOAD_TYPE="collection"
+            
+            if [ "$SUB_NAME" == "null" ] || [ -z "$SUB_NAME" ]; then
+              SUB_NAME=$(echo "$RAW_SUBS" | jq -r '.[0].name' 2>/dev/null || echo "null")
+              DOWNLOAD_TYPE="sub"
+            fi
 
-            # 1. 激活后端 (尝试访问 3000 端口)
-            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
-            
-            # 尝试获取订阅名，并防止 jq 报错导致脚本退出
-            RAW_DATA=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub || echo "")
-            SUB_NAME=$(echo "$RAW_DATA" | jq -r '.[0].name' 2>/dev/null || echo "null")
-            
-            if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ] && [ "$SUB_NAME" != "" ]; then
+            echo ">>> 探测结果: 订阅名=[$SUB_NAME], 类型=[$DOWNLOAD_TYPE]"
+
+            if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
               mkdir -p subs
-              curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
+              # 下载链接根据类型自动切换
+              curl -s "http://127.0.0.1:3000/download/${DOWNLOAD_TYPE}/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
               
-              # 对比逻辑
+              # 对比与推送逻辑
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
-                echo "📢 发现变动，同步中..."
+                echo "📢 发现数据变化，开始同步仓库..."
                 cp subs/new_all.yaml subs/all.yaml
                 docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
                 
@@ -70,9 +79,9 @@ jobs:
                 git config --local user.name "GitHub Action"
                 git add .
                 git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
-                git push origin main || echo "Push failed"
-
-                # 跨仓库推送
+                git push origin main
+                
+                # 跨仓库同步
                 rm -rf target_repo
                 if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                   mkdir -p target_repo/subs
@@ -84,13 +93,13 @@ jobs:
                   git commit -m "实时更新: $(date +'%H:%M:%S')" || echo ""
                   git push origin main
                   cd ..
-                  echo "✅ 同步成功"
+                  echo "🚀 同步完成！"
                 fi
               else
-                echo "😴 无变化"
+                echo "😴 内容未变化，继续监控..."
               fi
             else
-              echo "⚠️ 未发现有效订阅 (后端可能启动中或未配置)"
+              echo "⚠️ 依然没发现订阅。请打开隧道网页，添加一个订阅并点击右下角[保存]按钮。"
             fi
             sleep 60
           done
