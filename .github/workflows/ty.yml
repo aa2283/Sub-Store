@@ -21,75 +21,73 @@ jobs:
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 15
 
-      - name: 3. 建立隧道 (注意：映射后端 3001 端口)
+      - name: 3. 下载并开启隧道
         run: |
-          # 如果你想在网页端调试，隧道应该映射后端真正的 API 端口
+          # 明确下载 cloudflared
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          
+          # 启动隧道
           nohup ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile backend.log 2>&1 &
-          sleep 10
-          API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
-          echo "========================================================="
-          echo "🔗 前端管理入口 (API 已指向 3001):"
-          echo "👉 https://sub-store.vercel.app/?api=$API_URL"
-          echo "========================================================="
+          
+          # 等待日志生成
+          sleep 15
+          if [ -f backend.log ]; then
+            API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
+            echo "========================================================="
+            echo "🔗 前端管理入口: https://sub-store.vercel.app/?api=$API_URL"
+            echo "========================================================="
+          else
+            echo "❌ 隧道启动失败，请检查 Docker 是否正常"
+          fi
 
       - name: 4. 实时内网抓取与推送循环
         env:
-          MY_TOKEN: ${{ secrets.MY_PAT }} # 必须包含这一行
+          MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
           for i in {1..180}
           do
-            echo ">>> 第 $i 次检查 (每分钟一次)..."
+            echo ">>> 第 $i 次检查..."
             
-            # 1. 激活后端 (尝试访问 3001 端口)
-            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3001"
+            # 尝试获取订阅名，并防止 jq 报错导致脚本退出
+            RAW_DATA=$(curl -s http://127.0.0.1:3001/api/utils/list?type=sub || echo "")
+            SUB_NAME=$(echo "$RAW_DATA" | jq -r '.[0].name' 2>/dev/null || echo "null")
             
-            # 2. 获取订阅名称
-            SUB_NAME=$(curl -s http://127.0.0.1:3001/api/utils/list?type=sub | jq -r '.[0].name')
-            
-            if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
+            if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ] && [ "$SUB_NAME" != "" ]; then
               mkdir -p subs
-              
-              # 3. 抓取最新内容到临时文件
               curl -s "http://127.0.0.1:3001/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
               
-              # 4. 对比是否有变动
+              # 对比逻辑
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
-                echo "📢 发现变动，正在执行推送流程..."
+                echo "📢 发现变动，同步中..."
                 cp subs/new_all.yaml subs/all.yaml
-                
-                # 备份 sub-store.json (确保设置不丢失)
                 docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
                 
-                # 配置 Git
-                git config --local user.email "actions@github.com"
-                git config --local user.name "GitHub Action"
-
-                # --- 推送到当前 Sub-Store 仓库 (存档设置) ---
-                git add sub-store-data/sub-store.json subs/all.yaml
-                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo "无需存档"
-                git push origin main || echo "当前仓库推送失败"
-
-                # --- 推送到 v2ray_configs 仓库 (供客户端使用) ---
-                rm -rf target_repo
-                git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo
-                mkdir -p target_repo/subs
-                cp -f subs/all.yaml target_repo/subs/all.yaml
-                
-                cd target_repo
                 git config --local user.email "actions@github.com"
                 git config --local user.name "GitHub Action"
                 git add .
-                git commit -m "内网实时同步 (3001): $(date +'%H:%M:%S')" || echo "无变化"
-                git push origin main
-                cd ..
-                
-                echo "✅ 同步成功！仓库已更新。"
+                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
+                git push origin main || echo "Push failed"
+
+                # 跨仓库推送
+                rm -rf target_repo
+                if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
+                  mkdir -p target_repo/subs
+                  cp -f subs/all.yaml target_repo/subs/all.yaml
+                  cd target_repo
+                  git config --local user.email "actions@github.com"
+                  git config --local user.name "GitHub Action"
+                  git add .
+                  git commit -m "实时更新: $(date +'%H:%M:%S')" || echo ""
+                  git push origin main
+                  cd ..
+                  echo "✅ 同步成功"
+                fi
               else
-                echo "😴 内容未改变，跳过推送。"
+                echo "😴 无变化"
               fi
             else
-              echo "⚠️ 未发现有效订阅，请检查网页端 (3001端口) 是否已保存订阅。"
+              echo "⚠️ 未发现有效订阅 (后端可能启动中或未配置)"
             fi
-            
             sleep 60
           done
