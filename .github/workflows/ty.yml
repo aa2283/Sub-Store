@@ -13,12 +13,18 @@ jobs:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
 
-      - name: 2. 启动服务 (挂载持久化配置)
+      - name: 2. 启动服务 (必须挂载备份目录)
         run: |
+          # 确保目录存在（即便这次是刚拉取的代码）
           mkdir -p sub-store-data
+          
+          # 核心：将仓库里的 sub-store-data 文件夹挂载到容器内部
           docker run -d --name substore-svc \
             -v $(pwd)/sub-store-data:/opt/app/data \
-            -p 3000:3000 -p 3001:3001 xream/sub-store
+            -p 3000:3000 \
+            xream/sub-store
+          
+          echo "等待容器读取备份文件..."
           sleep 15
 
       - name: 3. 下载并开启隧道
