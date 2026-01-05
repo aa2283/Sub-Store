@@ -1,4 +1,4 @@
-name: Sub-Store 同步 (带前端注入调试)
+name: Sub-Store 实时同步存档版
 
 on:
   workflow_dispatch:
@@ -11,8 +11,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.MY_PAT }}
+          fetch-depth: 0
 
-      - name: 2. 启动服务
+      - name: 2. 启动服务 (挂载持久化配置)
         run: |
           mkdir -p sub-store-data
           docker run -d --name substore-svc \
@@ -20,49 +21,52 @@ jobs:
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 15
 
-      - name: 3. 开启隧道并生成注入链接
+      - name: 3. 开启调试隧道 (仅供进入网页)
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
           nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
-          sleep 15
-          
-          # 获取隧道的公网 API 地址
+          sleep 10
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
-          
           echo "========================================================="
-          echo "🔗 点击下方链接直接进入管理面板 (已自动注入后端):"
+          echo "🛠️ 调试入口 (改完保存即可):"
           echo "👉 https://sub-store.vercel.app/?api=$API_URL"
           echo "========================================================="
-          echo "⚠️ 请在网页操作完成后，等待脚本自动执行后续推送。"
 
-      - name: 4. 挂机等待 (预留时间给你在网页操作)
+      - name: 4. 实时内网抓取与推送循环
         run: |
-          echo ">>> 正在挂机 15 分钟，请在此期间完成订阅设置..."
-          sleep 900 
-
-      - name: 5. 立即从 127.0.0.1 抓取并推送
-        run: |
-          mkdir -p subs
-          # 使用 jq 自动获取你刚刚在网页里创建的订阅名
-          SUB_NAME=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub | jq -r '.[0].name')
-          
-          if [ "$SUB_NAME" != "null" ]; then
-            echo "发现订阅: $SUB_NAME，正在抓取..."
-            curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/all.yaml
-            curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=URI" -o subs/all.txt
-          fi
-
-      - name: 6. 推送至 v2ray_configs 仓库
-        run: |
-          git config --global user.email "actions@github.com"
-          git config --global user.name "GitHub Action"
-          git clone https://${{ secrets.MY_PAT }}@github.com/aa2283/v2ray_configs.git target_repo
-          
-          mkdir -p target_repo/subs
-          cp -f subs/all.* target_repo/subs/
-          
-          cd target_repo
-          git add .
-          git commit -m "Web 手动配置后同步: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          git push origin main
+          # 设定监控时长 (例如运行 3 小时，即 180 次循环)
+          for i in {1..180}
+          do
+            # 激活后端接口
+            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
+            
+            # 获取订阅名称
+            SUB_NAME=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub | jq -r '.[0].name')
+            
+            if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
+              mkdir -p subs
+              # 通过内网 127.0.0.1 抓取数据到临时文件
+              curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
+              
+              # 检查是否有变动 (对比新旧文件)
+              if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
+                echo "发现内网配置变动，正在同步至仓库..."
+                cp subs/new_all.yaml subs/all.yaml
+                
+                # 备份 sub-store.json 确保下次重启不丢失
+                docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
+                
+                # 推送到仓库
+                git config --local user.email "actions@github.com"
+                git config --local user.name "GitHub Action"
+                git add .
+                git commit -m "实时同步: $(date +'%H:%M:%S')" || echo "无变化"
+                git push origin main || echo "推送失败，稍后重试"
+                echo "✅ 同步成功！"
+              fi
+            fi
+            
+            # 每 60 秒检查一次变动
+            sleep 60
+          done
