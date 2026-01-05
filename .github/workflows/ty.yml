@@ -49,57 +49,70 @@ jobs:
           do
             echo ">>> 第 $i 次检查..."
             
-            # 1. 探测后端状态 (增加调试输出)
+            # --- 【核心修复：手动激活后端】 ---
+            # 模拟浏览器访问首页和注入地址，强制后端加载配置
+            curl -s -o /dev/null "http://127.0.0.1:3000"
+            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
+            sleep 2
+            
+            # 1. 探测订阅 (尝试获取订阅列表)
             RAW_SUBS=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub || echo "[]")
-            RAW_COLLECTIONS=$(curl -s http://127.0.0.1:3000/api/utils/list?type=collection || echo "[]")
+            SUB_NAME=$(echo "$RAW_SUBS" | jq -r '.[0].name' 2>/dev/null || echo "null")
             
-            # 2. 自动选一个不为空的订阅名 (优先组合订阅，其次普通订阅)
-            SUB_NAME=$(echo "$RAW_COLLECTIONS" | jq -r '.[0].name' 2>/dev/null || echo "null")
-            DOWNLOAD_TYPE="collection"
-            
+            # 2. 如果订阅为空，尝试探测组合订阅 (Collection)
             if [ "$SUB_NAME" == "null" ] || [ -z "$SUB_NAME" ]; then
-              SUB_NAME=$(echo "$RAW_SUBS" | jq -r '.[0].name' 2>/dev/null || echo "null")
-              DOWNLOAD_TYPE="sub"
+              RAW_COLLECTIONS=$(curl -s http://127.0.0.1:3000/api/utils/list?type=collection || echo "[]")
+              SUB_NAME=$(echo "$RAW_COLLECTIONS" | jq -r '.[0].name' 2>/dev/null || echo "null")
+              DL_URL="http://127.0.0.1:3000/download/collection/${SUB_NAME}?target=ClashMeta"
+            else
+              DL_URL="http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta"
             fi
 
-            echo ">>> 探测结果: 订阅名=[$SUB_NAME], 类型=[$DOWNLOAD_TYPE]"
+            echo ">>> 探测结果: 目标名=[$SUB_NAME]"
 
             if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
               mkdir -p subs
-              # 下载链接根据类型自动切换
-              curl -s "http://127.0.0.1:3000/download/${DOWNLOAD_TYPE}/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
+              # 3. 执行抓取
+              curl -s "$DL_URL" -o subs/new_all.yaml
               
-              # 对比与推送逻辑
-              if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
-                echo "📢 发现数据变化，开始同步仓库..."
-                cp subs/new_all.yaml subs/all.yaml
-                docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
-                
-                git config --local user.email "actions@github.com"
-                git config --local user.name "GitHub Action"
-                git add .
-                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
-                git push origin main
-                
-                # 跨仓库同步
-                rm -rf target_repo
-                if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                  mkdir -p target_repo/subs
-                  cp -f subs/all.yaml target_repo/subs/all.yaml
-                  cd target_repo
+              # 检查抓到的文件是不是空的或者报错网页
+              if [ -s subs/new_all.yaml ] && ! grep -q "<html>" subs/new_all.yaml; then
+                if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
+                  echo "📢 捕获成功且有变动，开始推送..."
+                  cp subs/new_all.yaml subs/all.yaml
+                  
+                  # 存档 JSON 设置
+                  docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
+                  
+                  # 推送至当前仓库
                   git config --local user.email "actions@github.com"
                   git config --local user.name "GitHub Action"
                   git add .
-                  git commit -m "实时更新: $(date +'%H:%M:%S')" || echo ""
+                  git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
                   git push origin main
-                  cd ..
-                  echo "🚀 同步完成！"
+                  
+                  # 推送至 v2ray_configs
+                  rm -rf target_repo
+                  if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
+                    mkdir -p target_repo/subs
+                    cp -f subs/all.yaml target_repo/subs/all.yaml
+                    cd target_repo
+                    git config --local user.email "actions@github.com"
+                    git config --local user.name "GitHub Action"
+                    git add .
+                    git commit -m "实时更新: $(date +'%H:%M:%S')" || echo ""
+                    git push origin main
+                    cd ..
+                    echo "🚀 推送完成！"
+                  fi
+                else
+                  echo "😴 内容未变化。"
                 fi
               else
-                echo "😴 内容未变化，继续监控..."
+                echo "⚠️ 抓取到的数据无效 (可能是后端未完全就绪)。"
               fi
             else
-              echo "⚠️ 依然没发现订阅。请打开隧道网页，添加一个订阅并点击右下角[保存]按钮。"
+              echo "⚠️ 依然没发现订阅。请确保在网页里点击了[保存]按钮。"
             fi
             sleep 60
           done
