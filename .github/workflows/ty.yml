@@ -25,7 +25,7 @@ jobs:
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile backend.log 2>&1 &
           sleep 10
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
           echo "========================================================="
@@ -40,14 +40,14 @@ jobs:
           for i in {1..180}
           do
             # 激活后端
-            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
+            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3001"
             
             # 获取订阅名称
-            SUB_NAME=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub | jq -r '.[0].name')
+            SUB_NAME=$(curl -s http://127.0.0.1:3001/api/utils/list?type=sub | jq -r '.[0].name')
             
             if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
               mkdir -p subs
-              curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
+              curl -s "http://127.0.0.1:3001/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
               
               # 检查是否有变动
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
