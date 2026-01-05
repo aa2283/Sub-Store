@@ -48,6 +48,9 @@ jobs:
           for i in {1..180}
           do
             echo ">>> 第 $i 次检查..."
+
+            # 1. 激活后端 (尝试访问 3000 端口)
+            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
             
             # 尝试获取订阅名，并防止 jq 报错导致脚本退出
             RAW_DATA=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub || echo "")
