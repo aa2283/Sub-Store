@@ -1,4 +1,4 @@
-name: Sub-Store 独立同步与长效调试
+name: Sub-Store 同步 (带前端注入调试)
 
 on:
   workflow_dispatch:
@@ -12,53 +12,57 @@ jobs:
         with:
           token: ${{ secrets.MY_PAT }}
 
-      - name: 2. 启动 Sub-Store 后端
+      - name: 2. 启动服务
         run: |
           mkdir -p sub-store-data
           docker run -d --name substore-svc \
             -v $(pwd)/sub-store-data:/opt/app/data \
             -p 3000:3000 -p 3001:3001 xream/sub-store
-          sleep 20
+          sleep 15
 
-      - name: 3. 【核心】开启长效隧道 (后台运行)
+      - name: 3. 开启隧道并生成注入链接
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-          
-          # 使用 nohup 确保隧道在后台运行，不会阻塞后续步骤
-          nohup ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log 2>&1 &
           nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
-          
           sleep 15
-          UI_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
+          
+          # 获取隧道的公网 API 地址
           API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
           
           echo "========================================================="
-          echo "🌐 调试 UI 地址: $UI_URL"
-          echo "🔗 调试 API 地址: $API_URL"
-          echo "⚠️ 注意：即便你关闭网页，后台同步仍会继续。"
+          echo "🔗 点击下方链接直接进入管理面板 (已自动注入后端):"
+          echo "👉 https://sub-store.vercel.app/?api=$API_URL"
           echo "========================================================="
+          echo "⚠️ 请在网页操作完成后，等待脚本自动执行后续推送。"
 
-      - name: 4. 执行自动同步任务
+      - name: 4. 挂机等待 (预留时间给你在网页操作)
+        run: |
+          echo ">>> 正在挂机 15 分钟，请在此期间完成订阅设置..."
+          sleep 900 
+
+      - name: 5. 立即从 127.0.0.1 抓取并推送
         run: |
           mkdir -p subs
-          # 这里访问的是本地 127.0.0.1，完全不受外部隧道状态影响
-          curl -s "http://127.0.0.1:3000/download/GitHub-Test?target=ClashMeta" -o subs/all.yaml
-          curl -s "http://127.0.0.1:3000/download/GitHub-Test?target=URI" -o subs/all.txt
-          ls -lh subs/
+          # 使用 jq 自动获取你刚刚在网页里创建的订阅名
+          SUB_NAME=$(curl -s http://127.0.0.1:3000/api/utils/list?type=sub | jq -r '.[0].name')
+          
+          if [ "$SUB_NAME" != "null" ]; then
+            echo "发现订阅: $SUB_NAME，正在抓取..."
+            curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/all.yaml
+            curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=URI" -o subs/all.txt
+          fi
 
-      - name: 5. 立即推送文件至仓库
+      - name: 6. 推送至 v2ray_configs 仓库
         run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Action"
-          git add subs/
-          git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          # 使用 MY_PAT 强制推送
-          git push https://${{ secrets.MY_PAT }}@github.com/${{ github.repository }}.git HEAD:${{ github.ref_name }}
-
-      - name: 6. 维持工作流运行 (挂机调试)
-        run: |
-          echo ">>> 同步已完成，现在进入挂机调试模式。"
-          echo ">>> 你可以在未来的 1 小时内随时进入上面的 UI 链接修改配置。"
-          # 保持虚拟机运行 60 分钟
-          sleep 3600
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Action"
+          git clone https://${{ secrets.MY_PAT }}@github.com/aa2283/v2ray_configs.git target_repo
+          
+          mkdir -p target_repo/subs
+          cp -f subs/all.* target_repo/subs/
+          
+          cd target_repo
+          git add .
+          git commit -m "Web 手动配置后同步: $(date +'%Y-%m-%d %H:%M')" || exit 0
+          git push origin main
