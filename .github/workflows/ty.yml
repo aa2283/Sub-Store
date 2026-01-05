@@ -1,13 +1,7 @@
 name: Sub-Store 实时同步存档版
 
 on:
-  workflow_dispatch: # 保留手动触发按钮
-  schedule:
-    # 这里的 cron 表达式：分钟 小时 日 月 周
-    # 0 0 * * * 代表 UTC 时间 00:00，即北京时间 08:00
-    - cron: '0 */6 * * *'
-    # 如果你想每 6 小时跑一次，可以改用下面这个：
-    # - cron: '0 */6 * * *'
+  workflow_dispatch:
 
 jobs:
   build:
