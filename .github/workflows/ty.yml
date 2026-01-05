@@ -34,11 +34,12 @@ jobs:
           echo "========================================================="
 
       - name: 4. 实时内网抓取与推送循环
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }} # 确保你已经在 Secrets 里设置了这个名字
         run: |
-          # 设定监控时长 (例如运行 3 小时，即 180 次循环)
           for i in {1..180}
           do
-            # 激活后端接口
+            # 激活后端
             curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
             
             # 获取订阅名称
@@ -46,27 +47,42 @@ jobs:
             
             if [ "$SUB_NAME" != "null" ] && [ -n "$SUB_NAME" ]; then
               mkdir -p subs
-              # 通过内网 127.0.0.1 抓取数据到临时文件
               curl -s "http://127.0.0.1:3000/download/${SUB_NAME}?target=ClashMeta" -o subs/new_all.yaml
               
-              # 检查是否有变动 (对比新旧文件)
+              # 检查是否有变动
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_all.yaml" "subs/all.yaml"; then
-                echo "发现内网配置变动，正在同步至仓库..."
+                echo "✅ 发现变动，正在同步至两个仓库..."
                 cp subs/new_all.yaml subs/all.yaml
                 
-                # 备份 sub-store.json 确保下次重启不丢失
+                # 备份 sub-store.json (存入当前 Sub-Store 仓库)
                 docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
                 
-                # 推送到仓库
+                # 配置 Git 信息
+                git config --local user.email "actions@github.com"
+                git config --local user.name "GitHub Action"
+
+                # --- 1. 推送配置备份到当前仓库 ---
+                git add sub-store-data/sub-store.json subs/all.yaml
+                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo "无需提交"
+                git push origin main || echo "当前仓库推送失败"
+
+                # --- 2. 关键：跨仓库推送到 v2ray_configs ---
+                # 使用你提供的 MY_PAT 进行鉴权
+                rm -rf target_repo # 确保清理旧数据
+                git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo
+                mkdir -p target_repo/subs
+                cp -f subs/all.yaml target_repo/subs/all.yaml
+                
+                cd target_repo
                 git config --local user.email "actions@github.com"
                 git config --local user.name "GitHub Action"
                 git add .
-                git commit -m "实时同步: $(date +'%H:%M:%S')" || echo "无变化"
-                git push origin main || echo "推送失败，稍后重试"
-                echo "✅ 同步成功！"
+                git commit -m "内网实时同步: $(date +'%H:%M:%S')" || echo "无变化"
+                git push origin main
+                cd ..
+                
+                echo "🚀 全部仓库已同步完成！"
               fi
             fi
-            
-            # 每 60 秒检查一次变动
             sleep 60
           done
