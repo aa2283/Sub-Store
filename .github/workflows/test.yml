@@ -1,94 +1,162 @@
-name: Sub-Store Full Stack Debugger
+name: Sub-Store 终极自动化同步 API_URL
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 保留手动启动按钮，方便随时调试
+  schedule:
+    # 这里的 cron 表达式：分钟 小时 日 月 周 (UTC 时间)
+    # 北京时间 08:00 = UTC 00:00
+    # - cron: '0 0 * * *'
+    
+    # 如果你想每 6 小时自动开机加工一次（北京时间 00:00, 06:00, 12:00, 18:00）
+     - cron: '0 */6 * * *'
+
+# ... 后面接你之前的 jobs 部分 ...
 
 jobs:
-  debug-session:
+  build:
     runs-on: ubuntu-latest
     steps:
-      - name: Launch Sub-Store
-        run: |
-          # 启动容器
-          # 我们把前端和后端端口都映射出来
-          docker run -d --name substore-svc \
-            -p 3000:3000 \
-            -p 3001:3001 \
-            xream/sub-store
-          sleep 5
+      - name: 1. 检出代码
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_PAT }}
+          fetch-depth: 0
 
-      - name: Setup Cloudflare Double Tunnel
+      - name: 2. 启动服务 (挂载持久化配置)
         run: |
+          mkdir -p sub-store-data
+          docker run -d --name substore-svc \
+            -v $(pwd)/sub-store-data:/opt/app/data \
+            -p 3000:3000 -p 3001:3001 xream/sub-store
+          sleep 15
+
+      - name: 3. 开启隧道并【精准】提取链接
+        run: |
+          # 1. 彻底删除旧日志，确保不会抓到上次运行的域名
+          rm -f backend.log
+          touch backend.log
+
+          # 2. 下载并启动隧道
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
+          
+          # 3. 循环检查日志，直到捕获到【本次】的新域名
+          echo "正在申请 Cloudflare 域名，请稍候..."
+          API_URL=""
+          for i in {1..20}; do
+            # 只有包含 trycloudflare.com 的行才是我们要的
+            API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | tail -n 1)
+            if [ -n "$API_URL" ]; then
+              echo "✅ 成功捕获新域名: $API_URL"
+              break
+            fi
+            echo "等待中 ($i/20)..."
+            sleep 2
+          done
 
-          # 创建配置文件来同时映射两个端口
-          cat <<EOF > config.yml
-          tunnel: debug-tunnel
-          credentials-file: /home/runner/.cloudflared/debug.json
-          ingress:
-            - hostname: substore-api.trycloudflare.com
-              service: http://localhost:3000
-            - hostname: substore-ui.trycloudflare.com
-              service: http://localhost:3001
-            - service: http_status:404
-          EOF
+          if [ -z "$API_URL" ]; then
+            echo "❌ 域名提取失败，当前日志内容如下："
+            cat backend.log
+            exit 1
+          fi
 
-          # 其实 Quick Tunnel 有个更简单的黑科技：
-          # 我们直接把整个 3001 端口发出去，
-          # 然后在网页里手动修改后端地址。
-          
-          ./cloudflared tunnel --url http://127.0.0.1:3001 --logfile tunnel.log &
-          
-          sleep 10
-          TUNNEL_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' tunnel.log | head -n 1)
-          
           echo "========================================================="
-          echo "🚀 第一步：访问前端入口："
-          echo "$TUNNEL_URL"
-          echo ""
-          echo "🚀 第二步：由于后端(3000)没在同一个域名，请进入网页后："
-          echo "1. 点击右上角的『设置』(齿轮图标)"
-          echo "2. 在『后端地址』里填入这个（或者是让它保持默认但要确保连通性）"
-          echo "   由于 Quick Tunnel 限制，最稳妥的办法是：再开一个隧道给 3000"
+          echo "🔗 正确的管理入口 (本次运行有效):"
+          echo "👉 https://sub-store.vercel.app/?api=$API_URL"
           echo "========================================================="
+          
+          # 存入环境变量，方便后续步骤调用
+          echo "FINAL_API_URL=$API_URL" >> $GITHUB_ENV
 
-      - name: Launch Backend Tunnel (Key!)
+          # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
+      - name: 5. 动态域名同步至私有库
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }}
+          REPO: "aa2283/v2ray_configs"
+          FILE: "tunnel_url.txt"
         run: |
-          # 为 3000 端口再开一个独立隧道
-          ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log &
-          sleep 10
-          BACKEND_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | head -n 1)
-          echo "========================================================="
-          echo "🔗 你的专属后端地址 (API) 是："
-          echo "$BACKEND_URL"
-          echo "========================================================="
-          echo "👉 请在打开的前端网页里，把设置中的后端地址改为上面这个 URL！"
-          echo "========================================================="
+          echo "🔄 正在上报动态域名到 $REPO..."
           
-          sleep 3600
-
-      - name: Download and Save Subscriptions
+          # 1. 获取目标文件当前的 SHA (更新文件必须带 SHA)
+          SHA=$(curl -s -H "Authorization: token $MY_TOKEN" \
+            "https://api.github.com/repos/$REPO/contents/$FILE" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
+          
+          # 2. 对当前捕获到的 API 域名进行 Base64 编码 (GitHub API 要求)
+          CONTENT=$(echo -n "${{ env.FINAL_API_URL }}" | base64 | tr -d '\n')
+          
+          # 3. 提交更新到 GitHub API
+          curl -s -X PUT \
+            -H "Authorization: token $MY_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"message\":\"Update Tunnel URL\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}" \
+            "https://api.github.com/repos/$REPO/contents/$FILE"
+          
+          echo -e "\n✅ 域名同步成功！"
+          echo "🔗 当前后端入口: ${{ env.FINAL_API_URL }}"
+          echo "========================================================="
+      # ================== 域名同步模块结束 ==================
+          
+      - name: 4. 精准监听下载链接并实时推送
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 等待 Sub-Store 启动
-          echo "等待容器就绪..."
-          sleep 15
-          
-          # 2. 创建全小写的 subs 目录
-          mkdir -p subs
-          
-          echo ">>> 正在抓取 ClashMeta 格式..."
-          curl -s "http://127.0.0.1:3001/download/sub?target=ClashMeta" -o subs/all.yaml
-          
-          echo ">>> 正在抓取 URI 格式..."
-          curl -s "http://127.0.0.1:3001/download/sub?target=URI" -o subs/all.txt
-          
-          ls -lh subs/
-          
-      - name: Git Push Changes
-        run: |
-          git config --local user.email "actions@github.com"
-          git config --local user.name "GitHub Action"
-          git add subs/
-          git commit -m "自动更新订阅: $(date +'%Y-%m-%d %H:%M')" || exit 0
-          git push   
+          for i in {1..15}
+          do
+            echo ">>> 第 $i 次检查 (监听 sub 订阅)..."
+            
+            # 1. 强制激活后端 API 状态
+            timeout 60s bash -c 'until curl -s http://127.0.0.1:3000 > /dev/null; do sleep 2; done'
+            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
+            sleep 2
+            
+            # 2. 抓取两个目标格式到临时文件
+            # 如果你的订阅名不叫 sub，请把下面 URL 里的 sub 改掉
+            curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/new_clash.yaml
+            curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/new_uri.txt
+            
+            # 3. 校验数据有效性 (防止抓到报错网页)
+            if grep -q "proxies" subs/new_clash.yaml || grep -q "://" subs/new_uri.txt; then
+              
+              # 4. 对比是否有变动 (只要其中一个变了就推送)
+              if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_clash.yaml" "subs/all.yaml" || ! cmp -s "subs/new_uri.txt" "subs/all.txt"; then
+                echo "📢 检测到订阅内容更新，正在执行同步..."
+                
+                cp subs/new_clash.yaml subs/all.yaml
+                cp subs/new_uri.txt subs/all.txt
+                
+                # 备份 sub-store.json
+                docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
+                
+                # A. 同步到当前 Sub-Store 仓库
+                git config --local user.email "actions@github.com"
+                git config --local user.name "GitHub Action"
+                git add .
+                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
+                git push origin main
+                
+                # B. 同步到 v2ray_configs 仓库
+                rm -rf target_repo
+                if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
+                  mkdir -p target_repo/subs
+                  cp -f subs/all.yaml target_repo/subs/all.yaml
+                  cp -f subs/all.txt target_repo/subs/all.txt
+                  
+                  cd target_repo
+                  git config --local user.email "actions@github.com"
+                  git config --local user.name "GitHub Action"
+                  git add .
+                  git commit -m "实时更新: $(date +'%H:%M:%S')" || echo ""
+                  git push origin main
+                  cd ..
+                  echo "🚀 v2ray_configs 同步完成！"
+                fi
+              else
+                echo "😴 内容暂无变动。"
+              fi
+            else
+              echo "⚠️ 尚未抓取到有效节点，请确保网页端订阅名正确且已点击[保存]。"
+            fi
+            
+            sleep 60
+          done
