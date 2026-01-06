@@ -30,31 +30,41 @@ jobs:
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 15
 
-      - name: 3. 开启隧道并【精准】提取链接
+      - name: 3. 开启隧道并【彻底静默】提取链接
         run: |
-          rm -f backend.log && touch backend.log
+          # 1. 下载 cloudflared
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log 2>&1 &
+
+          # 2. 启动隧道：将所有输出 (stdout & stderr) 全部重定向到 backend.log
+          # 使用 > backend.log 2>&1 确保控制台没有任何 cloudflared 的原始输出
+          nohup ./cloudflared tunnel --url http://127.0.0.1:3000 --logfile backend.log > /dev/null 2>&1 &
           
-          echo "正在申请 Cloudflare 隧道域名..."
+          echo "🔄 正在申请私密隧道域名..."
+          
+          # 3. 循环提取域名
           API_URL=""
           for i in {1..20}; do
+            # 从本地日志文件中精准抓取
             API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | tail -n 1)
             if [ -n "$API_URL" ]; then
-              # ✨ 核心操作：将 API_URL 设为掩码
-              # 这样之后日志里所有出现这个域名的地方都会显示为 ***
+              # ✨ 第一时间打码，后续任何步骤 echo 都会变成 ***
               echo "::add-mask::$API_URL"
-              echo "✅ 成功捕获新域名（已隐藏）"
               break
             fi
             sleep 2
           done
 
-          if [ -z "$API_URL" ]; then exit 1; fi
+          if [ -z "$API_URL" ]; then 
+            echo "❌ 隧道启动失败，请检查 backend.log"
+            exit 1 
+          fi
           
-          # 存入环境变量供后续步骤使用（环境变量本身是安全的）
+          # 4. 存入环境变量
           echo "FINAL_API_URL=$API_URL" >> $GITHUB_ENV
+          
+          # 5. 打印一条安全的确认信息
+          echo "✅ 隧道已建立，域名已在日志中自动脱敏。"
           
           # 💡 可选：如果你想在只有你能看到的地方查看域名
           # 可以将其写入 GitHub Step Summary，它不会显示在主日志列表里
