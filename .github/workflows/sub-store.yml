@@ -6,7 +6,7 @@ on:
     paths:
       - 'sub-store-data/sub-store.json' # 当你修改了 JSON 文件时自动触发转换
   schedule:
-    - cron: '0 22 * * *' # 每天北京时间早晨 6 点自动更新
+    #- cron: '0 22 * * *' # 每天北京时间早晨 6 点自动更新
 
 jobs:
   sync:
