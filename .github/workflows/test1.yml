@@ -44,7 +44,7 @@ jobs:
           # 3. 循环检查日志，直到捕获到【本次】的新域名
           echo "正在申请 Cloudflare 域名，请稍候..."
           API_URL=""
-          for i in {1..20}; do
+          for i in {1..15}; do
             # 只有包含 trycloudflare.com 的行才是我们要的
             API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | tail -n 1)
             if [ -n "$API_URL" ]; then
@@ -52,7 +52,7 @@ jobs:
               echo "✅ 成功捕获新域名: $API_URL"
               break
             fi
-            echo "等待中 ($i/20)..."
+            echo "等待中 ($i/15)..."
             sleep 2
           done
 
