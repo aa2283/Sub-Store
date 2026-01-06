@@ -46,9 +46,9 @@ jobs:
           API_URL=""
           for i in {1..15}; do
             # 只有包含 trycloudflare.com 的行才是我们要的
+            echo "::add-mask::$API_URL"
             API_URL=$(grep -o 'https://[-0-9a-z]*\.trycloudflare\.com' backend.log | tail -n 1)
             if [ -n "$API_URL" ]; then
-              echo "::add-mask::$API_URL"
               echo "✅ 成功捕获新域名: $API_URL"
               break
             fi
