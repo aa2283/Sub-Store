@@ -101,7 +101,7 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          for i in {1..180}
+          for i in {1..15}
           do
             echo ">>> 第 $i 次检查 (监听 sub 订阅)..."
             
