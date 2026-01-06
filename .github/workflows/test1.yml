@@ -67,31 +67,42 @@ jobs:
           echo "✅ 隧道已建立，域名已在日志中自动脱敏。"
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
-      - name: 5. 动态域名同步至私有库
+          
+      - name: 5. 动态域名同步至私有库 (全静默上报)
+        # 这里的环境变量会被 GitHub Actions 自动掩码，但为了双重保险，我们操作时要小心
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
           REPO: "aa2283/v2ray_configs"
           FILE: "tunnel_url.txt"
         run: |
-          echo "🔄 正在上报动态域名到 $REPO..."
+          # 使用 set +x 暂时关闭命令回显，防止 curl 命令本身被打印出来
+          set +x
           
-          # 1. 获取目标文件当前的 SHA (更新文件必须带 SHA)
+          echo "🔄 正在安全上报动态域名到私有库..."
+          
+          # 1. 获取文件的 SHA (通过管道处理，不打印结果)
           SHA=$(curl -s -H "Authorization: token $MY_TOKEN" \
             "https://api.github.com/repos/$REPO/contents/$FILE" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
           
-          # 2. 对当前捕获到的 API 域名进行 Base64 编码 (GitHub API 要求)
+          # 2. Base64 编码域名 (直接从环境变量读取，不 echo)
           CONTENT=$(echo -n "${{ env.FINAL_API_URL }}" | base64 | tr -d '\n')
           
-          # 3. 提交更新到 GitHub API
-          curl -s -X PUT \
+          # 3. 执行 PUT 更新 (关键：将 stdout 和 stderr 全部丢弃，防止报错时泄露 Token)
+          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
             -H "Authorization: token $MY_TOKEN" \
             -H "Content-Type: application/json" \
             -d "{\"message\":\"Update Tunnel URL\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}" \
-            "https://api.github.com/repos/$REPO/contents/$FILE"
+            "https://api.github.com/repos/$REPO/contents/$FILE")
           
-          echo -e "\n✅ 域名同步成功！"
-          echo "🔗 当前后端入口: ${{ env.FINAL_API_URL }}"
-          echo "========================================================="
+          if [ "$RESPONSE_CODE" -eq 200 ] || [ "$RESPONSE_CODE" -eq 201 ]; then
+            echo "✅ 域名已加密同步至私有库。"
+          else
+            echo "❌ 同步失败，HTTP 状态码: $RESPONSE_CODE"
+            exit 1
+          fi
+          
+          # 恢复命令回显（可选）
+          set -x
       # ================== 域名同步模块结束 ==================
           
       - name: 4. 精准监听下载链接并实时推送
