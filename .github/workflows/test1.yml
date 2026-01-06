@@ -1,4 +1,4 @@
-name: Sub-Store 终极自动化同步 API_URL
+name: Sub-Store 终极自动化同步 API_URL测试
 
 on:
   workflow_dispatch: # 保留手动启动按钮，方便随时调试
