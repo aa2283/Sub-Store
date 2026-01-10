@@ -70,41 +70,42 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 4. 动态域名同步至私有库 (强效加固版)
+      - name: 4. 动态域名同步至私有库 (强制更新版)
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
           REPO: "aa2283/v2ray_configs"
           FILE: "tunnel_url.txt"
         run: |
           set +x
-          # 1. 获取变量
-          DOMAIN="$FINAL_API_URL"
-          if [ -z "$DOMAIN" ]; then echo "❌ 变量为空"; exit 1; fi
-
-          # 2. 获取 SHA 时增加时间戳防止 API 缓存 (加上 ?t=...)
-          TIME=$(date +%s)
-          FILE_INFO=$(curl -s -u ":$MY_TOKEN" \
-            "https://api.github.com/repos/$REPO/contents/$FILE?t=$TIME")
           
+          # 获取当前时间，确保内容每次都不一样
+          NOW=$(date '+%Y-%m-%d %H:%M:%S')
+          
+          # 将【时间 + 域名】组合在一起
+          # 这样即便域名没变，因为时间变了，内容就一定会更新
+          RAW_CONTENT="Update: $NOW | URL: $FINAL_API_URL"
+          
+          # 编码
+          B64_CONTENT=$(echo -n "$RAW_CONTENT" | base64 | tr -d '\n')
+          
+          echo "🔄 正在尝试强制同步..."
+
+          # 获取 SHA
+          FILE_INFO=$(curl -s -u ":$MY_TOKEN" "https://api.github.com/repos/$REPO/contents/$FILE")
           SHA=$(echo "$FILE_INFO" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
-          
-          # 3. 准备数据
-          CONTENT=$(echo -n "$DOMAIN" | base64 | tr -d '\n')
 
-          # 4. 执行更新并捕获完整响应
+          # 推送
           RESPONSE=$(curl -s -X PUT \
             -u ":$MY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"message\":\"sync tunnel $TIME\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}" \
+            -d "{\"message\":\"⏰ $NOW\",\"content\":\"$B64_CONTENT\",\"sha\":\"$SHA\"}" \
             "https://api.github.com/repos/$REPO/contents/$FILE")
 
-          # 5. 结果诊断
           if [[ "$RESPONSE" == *"sha"* ]]; then
-            echo "✅ 同步成功！新域名：$DOMAIN"
-          elif [[ "$RESPONSE" == *"conflict"* ]]; then
-            echo "⚠️ 检测到 SHA 冲突 (409)，通常是由于操作过快导致的，请稍后重试。"
+            echo "✅ 强制同步成功！"
+            echo "本次内容: $RAW_CONTENT"
           else
-            echo "❌ 同步失败，完整响应如下："
+            echo "❌ 同步失败，响应如下："
             echo "$RESPONSE"
             exit 1
           fi
