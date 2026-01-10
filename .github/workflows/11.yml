@@ -43,7 +43,7 @@ jobs:
           echo "🔄 正在申请私密隧道域名..."
           
           - name: 3. 开启隧道并【彻底静默】提取链接
-        run: |
+          run: |
           # 1. 下载 cloudflared
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
