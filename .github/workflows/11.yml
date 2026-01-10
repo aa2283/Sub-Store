@@ -70,44 +70,42 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 4. 动态域名同步至私有库 (增强版)
-        # 注意：这里去掉了在 env 块直接引用 ${{ env }} 的不稳健写法
+      - name: 4. 动态域名同步至私有库 (强效加固版)
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
           REPO: "aa2283/v2ray_configs"
           FILE: "tunnel_url.txt"
         run: |
           set +x
-          
-          # 检查变量是否存在
-          if [ -z "$FINAL_API_URL" ]; then
-            echo "❌ 错误: 未能在环境变量中找到 FINAL_API_URL"
-            exit 1
-          fi
+          # 1. 获取变量
+          DOMAIN="$FINAL_API_URL"
+          if [ -z "$DOMAIN" ]; then echo "❌ 变量为空"; exit 1; fi
 
-          echo "🔄 正在同步域名: $FINAL_API_URL"
+          # 2. 获取 SHA 时增加时间戳防止 API 缓存 (加上 ?t=...)
+          TIME=$(date +%s)
+          FILE_INFO=$(curl -s -u ":$MY_TOKEN" \
+            "https://api.github.com/repos/$REPO/contents/$FILE?t=$TIME")
           
-          # 1. 获取文件的 SHA (如果文件不存在，SHA 为空)
-          FILE_INFO=$(curl -s -H "Authorization: token $MY_TOKEN" \
-            "https://api.github.com/repos/$REPO/contents/$FILE")
           SHA=$(echo "$FILE_INFO" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
           
-          # 2. 转换 Base64
-          CONTENT=$(echo -n "$FINAL_API_URL" | base64 | tr -d '\n')
-          
-          # 3. 执行更新 (API 方式比 git push 更快更静默)
-          RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-            -H "Authorization: token $MY_TOKEN" \
+          # 3. 准备数据
+          CONTENT=$(echo -n "$DOMAIN" | base64 | tr -d '\n')
+
+          # 4. 执行更新并捕获完整响应
+          RESPONSE=$(curl -s -X PUT \
+            -u ":$MY_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"message\":\"Update Tunnel URL\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}" \
+            -d "{\"message\":\"sync tunnel $TIME\",\"content\":\"$CONTENT\",\"sha\":\"$SHA\"}" \
             "https://api.github.com/repos/$REPO/contents/$FILE")
-          
-          if [ "$RESPONSE_CODE" -eq 200 ] || [ "$RESPONSE_CODE" -eq 201 ]; then
-            echo "✅ 域名同步成功！HTTP: $RESPONSE_CODE"
+
+          # 5. 结果诊断
+          if [[ "$RESPONSE" == *"sha"* ]]; then
+            echo "✅ 同步成功！新域名：$DOMAIN"
+          elif [[ "$RESPONSE" == *"conflict"* ]]; then
+            echo "⚠️ 检测到 SHA 冲突 (409)，通常是由于操作过快导致的，请稍后重试。"
           else
-            echo "❌ 同步失败！HTTP 状态码: $RESPONSE_CODE"
-            # 打印部分 API 响应以便排查错误原因（如 Token 权限问题）
-            echo "$FILE_INFO" | head -n 5
+            echo "❌ 同步失败，完整响应如下："
+            echo "$RESPONSE"
             exit 1
           fi
           set -x
