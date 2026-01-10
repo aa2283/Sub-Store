@@ -70,26 +70,32 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 4. 动态域名同步至私有库 (全静默上报)
-        # 这里的环境变量会被 GitHub Actions 自动掩码，但为了双重保险，我们操作时要小心
+      - name: 4. 动态域名同步至私有库 (增强版)
+        # 注意：这里去掉了在 env 块直接引用 ${{ env }} 的不稳健写法
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
           REPO: "aa2283/v2ray_configs"
           FILE: "tunnel_url.txt"
         run: |
-          # 使用 set +x 暂时关闭命令回显，防止 curl 命令本身被打印出来
           set +x
           
-          echo "🔄 正在安全上报动态域名到私有库..."
+          # 检查变量是否存在
+          if [ -z "$FINAL_API_URL" ]; then
+            echo "❌ 错误: 未能在环境变量中找到 FINAL_API_URL"
+            exit 1
+          fi
+
+          echo "🔄 正在同步域名: $FINAL_API_URL"
           
-          # 1. 获取文件的 SHA (通过管道处理，不打印结果)
-          SHA=$(curl -s -H "Authorization: token $MY_TOKEN" \
-            "https://api.github.com/repos/$REPO/contents/$FILE" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
+          # 1. 获取文件的 SHA (如果文件不存在，SHA 为空)
+          FILE_INFO=$(curl -s -H "Authorization: token $MY_TOKEN" \
+            "https://api.github.com/repos/$REPO/contents/$FILE")
+          SHA=$(echo "$FILE_INFO" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
           
-          # 2. Base64 编码域名 (直接从环境变量读取，不 echo)
-          CONTENT=$(echo -n "${{ env.FINAL_API_URL }}" | base64 | tr -d '\n')
+          # 2. 转换 Base64
+          CONTENT=$(echo -n "$FINAL_API_URL" | base64 | tr -d '\n')
           
-          # 3. 执行 PUT 更新 (关键：将 stdout 和 stderr 全部丢弃，防止报错时泄露 Token)
+          # 3. 执行更新 (API 方式比 git push 更快更静默)
           RESPONSE_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
             -H "Authorization: token $MY_TOKEN" \
             -H "Content-Type: application/json" \
@@ -97,13 +103,13 @@ jobs:
             "https://api.github.com/repos/$REPO/contents/$FILE")
           
           if [ "$RESPONSE_CODE" -eq 200 ] || [ "$RESPONSE_CODE" -eq 201 ]; then
-            echo "✅ 域名已加密同步至私有库。"
+            echo "✅ 域名同步成功！HTTP: $RESPONSE_CODE"
           else
-            echo "❌ 同步失败，HTTP 状态码: $RESPONSE_CODE"
+            echo "❌ 同步失败！HTTP 状态码: $RESPONSE_CODE"
+            # 打印部分 API 响应以便排查错误原因（如 Token 权限问题）
+            echo "$FILE_INFO" | head -n 5
             exit 1
           fi
-          
-          # 恢复命令回显（可选）
           set -x
       # ================== 域名同步模块结束 ==================
           
