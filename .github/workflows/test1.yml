@@ -2,7 +2,7 @@ name: Sub-Store 终极自动化同步 API_URL 测试
 
 on:
   workflow_dispatch: # 保留手动启动按钮，方便随时调试
-  schedule:
+  #schedule:
     # 这里的 cron 表达式：分钟 小时 日 月 周 (UTC 时间)
     # 北京时间 08:00 = UTC 00:00
     # - cron: '0 0 * * *'
