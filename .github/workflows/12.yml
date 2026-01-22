@@ -1,0 +1,48 @@
+- name: 5. 动态域名同步至私有库 (API 修复版)
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }}
+          REPO: "aa2283/v2ray_configs"
+          FILE: "tunnel_url.txt"
+          # 确保上一阶段已经设置了 FINAL_API_URL 环境变量
+        run: |
+          set +x  # 静默模式
+          
+          echo "🔄 正在尝试通过 GitHub API 更新文件..."
+
+          # 1. 更加健壮的 SHA 获取方式 (增加对 404 情况的处理)
+          # 注意：改用 Bearer 鉴权
+          SHA_RESPONSE=$(curl -s -H "Authorization: Bearer $MY_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$REPO/contents/$FILE")
+          
+          SHA=$(echo "$SHA_RESPONSE" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
+          
+          if [ -n "$SHA" ]; then
+            echo "🔍 发现现有文件，SHA: $SHA"
+          else
+            echo "🔍 文件不存在，将创建新文件。"
+          fi
+
+          # 2. 准备内容 (直接使用 ${{ env.FINAL_API_URL }} 可能会因为空格报错，建议加双引号)
+          DATA_CONTENT=$(echo -n "${{ env.FINAL_API_URL }}" | base64 | tr -d '\n')
+
+          # 3. 执行 PUT 更新/创建
+          # 增加 Accept 头部是 API 调用的最佳实践
+          RESPONSE=$(curl -s -X PUT \
+            -H "Authorization: Bearer $MY_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            -d "{\"message\":\"Update Tunnel URL\",\"content\":\"$DATA_CONTENT\",\"sha\":\"$SHA\"}" \
+            -w "\n%{http_code}" \
+            "https://api.github.com/repos/$REPO/contents/$FILE")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          
+          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
+            echo "✅ 域名已同步至私有库 ($HTTP_CODE)。"
+          else
+            echo "❌ 同步失败，错误码: $HTTP_CODE"
+            # 此时打印部分响应内容（不含敏感词）以便排查
+            echo "错误响应详情: $(echo "$RESPONSE" | head -n 1)"
+            exit 1
+          fi
