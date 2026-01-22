@@ -68,49 +68,35 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 5. 动态域名同步 (分支强制修正版)
+      - name: 5. 域名同步至 Cloudflare KV
         env:
-          MY_TOKEN: ${{ secrets.MY_PAT }}
-          REPO: "aa2283/v2ray_configs"
-          FILE: "tunnel_url.txt"
+          # 在这里指定该任务对应的 KV 键名
+          # 可选: URL_3000, URL_8199_1, URL_8199_2, URL_8299_1, URL_8299_2
+          KV_KEY: "URL_3000" 
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_KV_ID: ${{ secrets.CF_KV_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
-          # 1. 预处理：去掉可能存在的空格或换行
-          CLEAN_URL=$(echo "${{ env.FINAL_API_URL }}" | tr -d '[:space:]')
-          echo "DEBUG: 最终处理后的长度为 ${#CLEAN_URL}"
+          # 1. 检查变量是否有效
+          if [ -z "${{ env.FINAL_API_URL }}" ]; then
+            echo "❌ FINAL_API_URL 为空，跳过同步"
+            exit 1
+          fi
 
-          set +x
-          # 2. 明确指定从 main 分支获取 SHA (防止 master/main 混淆)
-          SHA_RESPONSE=$(curl -s -H "Authorization: Bearer $MY_TOKEN" \
-            "https://api.github.com/repos/$REPO/contents/$FILE?ref=main")
+          echo "🚀 正在同步域名到 Cloudflare KV, Key: ${{ env.KV_KEY }}"
           
-          SHA=$(echo "$SHA_RESPONSE" | grep -o '"sha": "[^"]*' | cut -d'"' -f4 || echo "")
+          # 2. 执行 PUT 请求 (注意这里的缩进是标准 10 个空格)
+          RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/storage/kv/namespaces/$CF_KV_ID/values/${{ env.KV_KEY }}" \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data "${{ env.FINAL_API_URL }}")
 
-          # 3. 编码内容
-          DATA_CONTENT=$(echo -n "$CLEAN_URL" | base64 | tr -d '\n')
-          
-          # 4. 执行更新，并【明确指定】推送到 main 分支
-          # 注意：JSON 中增加了 "branch": "main"
-          RESPONSE=$(curl -s -X PUT \
-            -H "Authorization: Bearer $MY_TOKEN" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"message\": \"🚀 Sync Tunnel URL: $(date +'%H:%M')\",
-              \"content\": \"$DATA_CONTENT\",
-              \"sha\": \"$SHA\",
-              \"branch\": \"main\"
-            }" \
-            -w "\n%{http_code}" \
-            "https://api.github.com/repos/$REPO/contents/$FILE")
-
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          
-          if [ "$HTTP_CODE" -eq 200 ] || [ "$HTTP_CODE" -eq 201 ]; then
-            echo "✅ 同步成功！状态码: $HTTP_CODE"
-            echo "📍 已强制更新至分支: main"
-            # 打印提交后的新 SHA 供验证
-            echo "✨ 新文件 SHA: $(echo "$RESPONSE" | grep -o '"sha": "[^"]*' | head -n 1 | cut -d'"' -f4)"
+          # 3. 结果校验
+          if echo "$RESPONSE" | grep -q '"success":true'; then
+            echo "✅ KV 同步成功！"
           else
-            echo "❌ 同步失败: $HTTP_CODE"
+            echo "❌ KV 同步失败，响应详情："
+            echo "$RESPONSE"
             exit 1
           fi
       # ================== 域名同步模块结束 ==================
