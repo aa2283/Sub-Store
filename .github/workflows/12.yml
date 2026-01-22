@@ -70,14 +70,11 @@ jobs:
           
       - name: 5. 域名同步至 Cloudflare KV
         env:
-          # 在这里指定该任务对应的 KV 键名
-          # 可选: URL_3000, URL_8199_1, URL_8199_2, URL_8299_1, URL_8299_2
           KV_KEY: "URL_3000" 
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_KV_ID: ${{ secrets.CF_KV_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
-          # 1. 检查变量是否有效
           if [ -z "${{ env.FINAL_API_URL }}" ]; then
             echo "❌ FINAL_API_URL 为空，跳过同步"
             exit 1
@@ -85,18 +82,19 @@ jobs:
 
           echo "🚀 正在同步域名到 Cloudflare KV, Key: ${{ env.KV_KEY }}"
           
-          # 2. 执行 PUT 请求 (注意这里的缩进是标准 10 个空格)
+          # 执行 PUT 请求
           RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/storage/kv/namespaces/$CF_KV_ID/values/${{ env.KV_KEY }}" \
             -H "Authorization: Bearer $CF_API_TOKEN" \
             -H "Content-Type: text/plain" \
             --data "${{ env.FINAL_API_URL }}")
 
-          # 3. 结果校验
-          if echo "$RESPONSE" | grep -q '"success":true'; then
+          # 【关键修复】使用正则兼容有无空格的情况，并打印原始响应方便排查
+          echo "📡 原始响应: $RESPONSE"
+          
+          if echo "$RESPONSE" | grep -Ei '"success"\s*:\s*true' > /dev/null; then
             echo "✅ KV 同步成功！"
           else
-            echo "❌ KV 同步失败，响应详情："
-            echo "$RESPONSE"
+            echo "❌ KV 同步失败，请检查 Token 权限或 ID 是否正确。"
             exit 1
           fi
       # ================== 域名同步模块结束 ==================
