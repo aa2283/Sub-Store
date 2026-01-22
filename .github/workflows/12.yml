@@ -75,6 +75,7 @@ jobs:
           FILE: "tunnel_url.txt"
           # 确保上一阶段已经设置了 FINAL_API_URL 环境变量
         run: |
+          echo "DEBUG: 变量长度为 ${#FINAL_API_URL}"
           set +x  # 静默模式
           
           echo "🔄 正在尝试通过 GitHub API 更新文件..."
