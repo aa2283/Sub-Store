@@ -105,82 +105,74 @@ jobs:
         run: |
           mkdir -p subs
           
-          # 读取变量 (例如 sub:ClashMeta,sub:sing-box,yml:URI)
+          # 1. 读取变量（支持多行）
           local_list="${{ vars.SUB_LIST }}"
-          
-          if [ -z "$local_list" ]; then
-            echo "❌ 错误: 未检测到 SUB_LIST 变量"
-            exit 1
-          fi
+          if [ -z "$local_list" ]; then echo "❌ 缺失 SUB_LIST"; exit 1; fi
 
-          IFS=',' read -ra ITEMS <<< "$local_list"
+          # 按行读取
+          readarray -t LINES <<< "$local_list"
 
           for i in {1..15}
           do
             echo ">>> 第 $i 次检查 <<<"
             HAS_UPDATE=false
             
-            # 1. 动态抓取并比对
-            for item in "${ITEMS[@]}"; do
-              NAME="${item%%:*}"
-              TARGET="${item#*:}"
+            for line in "${LINES[@]}"; do
+              [[ -z "$line" ]] && continue
               
-              # --- 后缀判断逻辑增强 ---
-              if [[ "$TARGET" == *"Clash"* ]]; then
-                ext="yaml"
-              elif [[ "$TARGET" == *"sing-box"* ]]; then
-                ext="json"
-              else
-                ext="txt"
-              fi
+              # 拆分 sub 和 yaml|txt|json
+              NAME="${line%%:*}"
+              FORMATS_STR="${line#*:}"
+              # 将 yaml|txt|json 转换为数组
+              IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
               
-              FILE_PATH="subs/$NAME.$ext"
-              OLD_PATH="subs/old_$NAME.$ext"
-              
-              # 抓取
-              curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
-              
-              # 只有当文件不为空且有变化时，才标记更新
-              if [ -s "$FILE_PATH" ]; then
-                if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH"; then
-                  echo "📢 发现更新: $NAME.$ext ($(wc -c < $FILE_PATH) 字节)"
-                  cp -f "$FILE_PATH" "$OLD_PATH"
-                  HAS_UPDATE=true
+              for fmt in "${FORMATS[@]}"; do
+                # 自动映射格式别名到 Sub-Store 的 target 参数
+                case $fmt in
+                  yaml) TARGET="ClashMeta" ;;
+                  json) TARGET="sing-box" ;;
+                  txt)  TARGET="URI" ;;
+                  *)    TARGET="$fmt" ;; # 如果填的是原名也支持
+                esac
+                
+                ext=$fmt
+                FILE_PATH="subs/$NAME.$ext"
+                OLD_PATH="subs/old_$NAME.$ext"
+                
+                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
+                
+                if [ -s "$FILE_PATH" ]; then
+                  if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH"; then
+                    echo "📢 发现更新: $NAME.$ext"
+                    cp -f "$FILE_PATH" "$OLD_PATH"
+                    HAS_UPDATE=true
+                  fi
                 fi
-              fi
+              done
             done
 
-            # 2. 精准同步更新到仓库
+            # 2. 同步逻辑
             if [ "$HAS_UPDATE" = true ]; then
-                echo "🚀 正在同步更新到仓库..."
-                
                 rm -rf target_repo
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                     mkdir -p target_repo/sub-store-nodes
-                    
-                    # --- 精准复制：只复制变量中定义的文件 ---
-                    for item in "${ITEMS[@]}"; do
-                        NAME="${item%%:*}"
-                        # 复制该名称对应的所有后缀文件 (yaml, txt, json)
-                        cp -f subs/$NAME.* target_repo/sub-store-nodes/ 2>/dev/null || true
-                    done
+                    # 复制所有非 old_ 开头的文件
+                    cp -f subs/[!old]*.* target_repo/sub-store-nodes/ 2>/dev/null || true
                     
                     cd target_repo
                     git config --local user.email "actions@github.com"
                     git config --local user.name "GitHub Action"
                     git add .
-                    
                     if [ -n "$(git status --porcelain)" ]; then
-                        git commit -m "节点更新: $(date +'%H:%M:%S')"
+                        git commit -m "批量同步: $(date +'%H:%M:%S')"
                         git push origin main
-                        echo "✅ 同步成功！已保存对应的 yaml/json/txt 文件"
+                        echo "✅ 成功同步所有格式！"
                     fi
                     cd ..
                     rm -rf target_repo
                 fi
             else
-                echo ">>> 所有订阅内容暂无变动"
+                echo ">>> 暂无变动"
             fi
-            
             sleep 60
           done
