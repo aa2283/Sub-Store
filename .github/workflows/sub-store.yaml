@@ -140,9 +140,9 @@ jobs:
                 # B. 同步到 v2ray_configs 仓库
                 rm -rf target_repo
                 if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                  mkdir -p target_repo/subs
-                  cp -f subs/all.yaml target_repo/subs/all.yaml
-                  cp -f subs/all.txt target_repo/subs/all.txt
+                  mkdir -p target_repo/sub-store-nodes
+                  cp -f subs/all.yaml target_repo/sub-store-nodes/all.yaml
+                  cp -f subs/all.txt target_repo/sub-store-nodes/all.txt
                   
                   cd target_repo
                   git config --local user.email "actions@github.com"
