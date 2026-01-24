@@ -21,6 +21,30 @@ jobs:
         with:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
+          
+      - name: 1-2. 载入备份
+        run: |
+          # 创建配置目录
+          mkdir -p data
+          
+          # 尝试从你的私有仓库拉取现有的配置
+          echo "📥 正在拉取 sub-store.json 备份..."
+          rm -rf backup_repo
+          if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo; then
+              if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
+                  cp -f backup_repo/sub-store-nodes/sub-store.json data/sub-store.json
+                  echo "✅ 已恢复之前的 Sub-Store 配置"
+              else
+                  echo "ℹ️ 仓库中未找到备份，将以初始状态启动"
+              fi
+              rm -rf backup_repo
+          fi
+
+          # 启动 Sub-Store 容器
+          #docker run -d --name sub-store -v $(pwd)/data:/opt/sub-store/data -p 3000:3000 xream/sub-store
+          
+          # 等待启动...
+          sleep 10
 
       - name: 2. 启动服务 (挂载持久化配置)
         run: |
