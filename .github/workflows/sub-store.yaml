@@ -127,12 +127,16 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
+          # 1. 初始化绝对路径
           ROOT_DIR=$(pwd)
-          DATA_DIR="sub-store-data"
-          mkdir -p subs
+          DATA_DIR="$ROOT_DIR/sub-store-data"
+          SUBS_DIR="$ROOT_DIR/subs"
+          REPO_DIR="$ROOT_DIR/target_repo"
           
+          mkdir -p "$SUBS_DIR"
+          
+          # 处理变量
           local_list="${{ vars.SUB_LIST }}"
-          # 处理可能的换行和空格
           readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//')"
 
           for i in {1..15}
@@ -140,6 +144,7 @@ jobs:
             echo ">>> 第 $i 次检查 <<<"
             HAS_UPDATE=false
 
+            # 2. 抓取逻辑
             for line in "${LINES[@]}"; do
               [[ -z "$line" ]] && continue
               NAME="${line%%:*}"
@@ -147,7 +152,6 @@ jobs:
               IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
               
               for fmt in "${FORMATS[@]}"; do
-                # 核心修复：确保映射关系绝对正确
                 case $fmt in
                   yaml) TARGET="ClashMeta" ;;
                   json) TARGET="sing-box" ;;
@@ -155,14 +159,12 @@ jobs:
                   *)    TARGET="$fmt" ;;
                 esac
                 
-                FILE_PATH="subs/$NAME.$fmt"
-                OLD_PATH="subs/old_$NAME.$fmt"
+                FILE_PATH="$SUBS_DIR/$NAME.$fmt"
+                OLD_PATH="$SUBS_DIR/old_$NAME.$fmt"
                 
-                # 下载并保存
-                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
+                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH" || true
                 
                 if [ -s "$FILE_PATH" ]; then
-                  # 第一次强制更新或内容变化
                   if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH" || [ "$i" -eq 1 ]; then
                     echo "📢 检测到变动: $NAME.$fmt"
                     cp -f "$FILE_PATH" "$OLD_PATH"
@@ -172,44 +174,42 @@ jobs:
               done
             done
 
+            # 3. 仓库同步逻辑 (全程使用绝对路径，不使用 cd)
             if [ "$HAS_UPDATE" = true ]; then
-              echo "🚀 启动精准同步..."
-              rm -rf target_repo
+              echo "🚀 启动同步..."
+              rm -rf "$REPO_DIR"
               
-              if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                DEST_PATH="$ROOT_DIR/target_repo/sub-store-nodes"
-                cd "$ROOT_DIR/target_repo"
-                # 修复 exit 128：移除可能的子模块缓存
-                git rm -r --cached target_repo 2>/dev/null || true
+              if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git "$REPO_DIR"; then
+                DEST_PATH="$REPO_DIR/sub-store-nodes"
                 mkdir -p "$DEST_PATH"
 
-                # A. 【关键】清理旧账：删除所有旧订阅文件，防止 all.txt 残留
-                echo "🧹 清理仓库冗余文件..."
+                # A. 清理冗余
+                echo "🧹 清理旧文件..."
                 find "$DEST_PATH" -type f ! -name "sub-store.json" -delete 2>/dev/null || true
                 
-                # B. 放入新生成的文件
+                # B. 复制新文件 (使用绝对路径，排除 old_ 开头的文件)
                 echo "📂 写入最新节点..."
-                find "$ROOT_DIR/subs" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
+                find "$SUBS_DIR" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
 
                 # C. 同步配置备份
-                if [ -f "$ROOT_DIR/$DATA_DIR/sub-store.json" ]; then
-                  cp -f "$ROOT_DIR/$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
+                if [ -f "$DATA_DIR/sub-store.json" ]; then
+                  cp -f "$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
                   echo "✅ sub-store.json 备份已更新"
                 fi
 
-                # D. Git 提交推送
-                git config --local user.email "actions@github.com"
-                git config --local user.name "GitHub Action"
-                git add .
-                if ! git diff --cached --quiet; then
-                  git commit -m "自动同步: $(date +'%H:%M:%S')"
-                  git push origin main && echo "🚀 仓库同步成功！"
-                else
-                  echo "ℹ️ 内容无变动，跳过推送"
-                fi
+                # D. 推送 (仅在提交时进入目录)
+                (
+                  cd "$REPO_DIR"
+                  git config --local user.email "actions@github.com"
+                  git config --local user.name "GitHub Action"
+                  git add .
+                  if ! git diff --cached --quiet; then
+                    git commit -m "自动同步: $(date +'%H:%M:%S')"
+                    git push origin main && echo "🚀 仓库同步成功！"
+                  fi
+                )
                 
-                cd "$ROOT_DIR"
-                rm -rf target_repo
+                rm -rf "$REPO_DIR"
               fi
             else
               echo ">>> 暂无变动"
