@@ -68,7 +68,7 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 5. 域名同步至 Cloudflare KV
+      - name: 4. 域名同步至 Cloudflare KV
         env:
           KV_KEY: "URL_3000" 
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -99,7 +99,7 @@ jobs:
           fi
       # ================== 域名同步模块结束 ==================
           
-      - name: 4. 精准监听下载链接并实时推送
+      - name: 5. 精准监听下载链接并实时推送
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
