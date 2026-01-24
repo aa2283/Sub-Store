@@ -105,54 +105,68 @@ jobs:
         run: |
           mkdir -p subs
           
-          # 从变量读取列表
-          local_list="${{ vars.SUB_LIST || 'ClashMeta,URI' }}"
+          # 读取变量 (例如 sub:ClashMeta,yml:URI)
+          local_list="${{ vars.SUB_LIST }}"
+          
+          if [ -z "$local_list" ]; then
+            echo "❌ 错误: 未检测到 SUB_LIST 变量"
+            exit 1
+          fi
+
           IFS=',' read -ra ITEMS <<< "$local_list"
 
           for i in {1..15}
           do
-            # 1. 静默抓取
-            for target in "${ITEMS[@]}"; do
-              ext=$([ "$target" == "ClashMeta" ] && echo "yaml" || echo "txt")
-              curl -s "http://127.0.0.1:3000/download/sub?target=$target" -o "subs/new_sub.$ext"
+            echo ">>> 第 $i 次检查 <<<"
+            HAS_UPDATE=false
+            
+            # 1. 动态抓取并比对
+            for item in "${ITEMS[@]}"; do
+              NAME="${item%%:*}"
+              TARGET="${item#*:}"
+              ext=$([[ "$TARGET" == *"Clash"* ]] && echo "yaml" || echo "txt")
+              
+              # 下载到临时文件
+              FILE_PATH="subs/$NAME.$ext"
+              OLD_PATH="subs/old_$NAME.$ext"
+              
+              curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
+              
+              # 检查是否有内容变化 (对比旧文件)
+              if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH"; then
+                echo "📢 发现更新: $NAME.$ext ($(wc -c < $FILE_PATH) 字节)"
+                cp -f "$FILE_PATH" "$OLD_PATH"
+                HAS_UPDATE=true
+              fi
             done
 
-            # 2. 核心判断：对比新抓取的 yaml 和本地旧的 yaml
-            # 如果 all.yaml 不存在，或者新旧文件内容不同
-            if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_sub.yaml" "subs/all.yaml"; then
+            # 2. 如果有任何一个文件更新了，就执行整体推送
+            if [ "$HAS_UPDATE" = true ]; then
+                echo "🚀 正在同步更新到仓库..."
                 
-                SIZE=$(wc -c < subs/new_sub.yaml)
-                echo "📢 【检测到更新】当前大小: $SIZE 字节，正在同步至仓库..."
-
-                # 更新本地对比基准
-                cp -f subs/new_sub.yaml subs/all.yaml
-                # 准备最终推送的文件
-                cp -f subs/new_sub.yaml subs/sub-store.yaml
-                cp -f subs/new_sub.txt subs/sub-store.txt
-                
-                # 3. 推送流程
                 rm -rf target_repo
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                     mkdir -p target_repo/sub-store-nodes
-                    cp -f subs/sub-store.* target_repo/sub-store-nodes/
+                    
+                    # 将所有抓取到的最新文件复制过去 (排除 old_ 开头的文件)
+                    # 这样你的仓库里就是 sub.yaml, yml.yaml 等
+                    cp -f subs/[!old]*.* target_repo/sub-store-nodes/
                     
                     cd target_repo
                     git config --local user.email "actions@github.com"
                     git config --local user.name "GitHub Action"
-                    
                     git add .
-                    # 再次确认是否有 git 层的变动
+                    
                     if [ -n "$(git status --porcelain)" ]; then
-                        git commit -m "节点更新: $(date +'%H:%M:%S')"
+                        git commit -m "节点自动同步: $(date +'%H:%M:%S')"
                         git push origin main
-                        echo "🚀 仓库同步成功！"
+                        echo "✅ 仓库推送成功！"
                     fi
                     cd ..
                     rm -rf target_repo
                 fi
             else
-                # 如果没变动，只打印一行极其简洁的日志（或者不打印）
-                echo ">>> 第 $i 次检查：内容无变化"
+                echo ">>> 所有订阅内容暂无变动"
             fi
             
             sleep 60
