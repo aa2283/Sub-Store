@@ -23,6 +23,8 @@ jobs:
           fetch-depth: 0
           
       - name: 1-2. 载入备份
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }} # 必须确保 Secret 名字正确
         run: |
           # 创建配置目录
           mkdir -p data
