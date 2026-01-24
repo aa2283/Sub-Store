@@ -128,8 +128,6 @@ jobs:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
           mkdir -p subs
-          
-          # 1. 读取变量（支持多行）
           local_list="${{ vars.SUB_LIST }}"
           if [ -z "$local_list" ]; then echo "❌ 缺失 SUB_LIST"; exit 1; fi
           readarray -t LINES <<< "$local_list"
@@ -139,10 +137,8 @@ jobs:
             echo ">>> 第 $i 次检查 <<<"
             HAS_UPDATE=false
             
-            # 2. 内部抓取循环
             for line in "${LINES[@]}"; do
               [[ -z "$line" ]] && continue
-              
               NAME="${line%%:*}"
               FORMATS_STR="${line#*:}"
               IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
@@ -159,13 +155,11 @@ jobs:
                 FILE_PATH="subs/$NAME.$ext"
                 OLD_PATH="subs/old_$NAME.$ext"
                 
-                # 执行抓取
                 curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
                 
                 if [ -s "$FILE_PATH" ]; then
-                  # 只有第一次运行，或者文件内容有变动时才触发同步
                   if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH" || [ "$i" -eq 1 ]; then
-                    echo "📢 发现变动: $NAME.$ext"
+                    echo "📢 变动检测: $NAME.$ext"
                     cp -f "$FILE_PATH" "$OLD_PATH"
                     HAS_UPDATE=true
                   fi
@@ -173,41 +167,53 @@ jobs:
               done
             done
 
-            # 3. 同步推送逻辑
             if [ "$HAS_UPDATE" = true ]; then
-                echo "🚀 正在推送订阅文件与 sub-store.json 配置..."
+                echo "🚀 启动仓库同步..."
                 rm -rf target_repo
+                # 1. 克隆仓库
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                    mkdir -p target_repo/sub-store-nodes
+                    # 2. 确保目标目录存在
+                    DEST="target_repo/sub-store-nodes"
+                    mkdir -p "$DEST"
                     
-                    # A. 精准清理旧订阅（保留 json 备份文件不删，防止 clone 覆盖延迟）
-                    find target_repo/sub-store-nodes -type f ! -name 'sub-store.json' -delete
+                    # 3. 备份现有的 json 配置（如果存在），防止被误删
+                    [ -f "$DEST/sub-store.json" ] && cp "$DEST/sub-store.json" ./temp_sub_store.json
                     
-                    # B. 复制最新的订阅文件
-                    cp -f subs/[!old]*.* target_repo/sub-store-nodes/ 2>/dev/null || true
+                    # 4. 清理旧订阅文件并放入新文件
+                    rm -rf "$DEST"/*
+                    cp -f subs/[!old]*.* "$DEST/" 2>/dev/null || true
                     
-                    # C. 备份 sub-store.json 核心配置 (路径统一为 sub-store-data)
+                    # 5. 优先从运行中的 data 目录同步最新的 json 配置，如果没有，则还原刚才备份的
                     if [ -f "sub-store-data/sub-store.json" ]; then
-                        cp -f sub-store-data/sub-store.json target_repo/sub-store-nodes/sub-store.json
-                        echo "✅ 已同步 sub-store.json 备份"
+                        cp -f sub-store-data/sub-store.json "$DEST/sub-store.json"
+                        echo "✅ 配置已从运行目录备份"
+                    elif [ -f "./temp_sub_store.json" ]; then
+                        mv ./temp_sub_store.json "$DEST/sub-store.json"
+                        echo "⚠️ 运行目录无配置，已保留仓库原有配置"
                     fi
                     
-                    # D. Git 提交
+                    # 6. 提交变动
                     cd target_repo
                     git config --local user.email "actions@github.com"
                     git config --local user.name "GitHub Action"
                     git add .
+                    
+                    # 只有在真的有变动时才 push
                     if [ -n "$(git status --porcelain)" ]; then
-                        git commit -m "数据同步 [$(date +'%H:%M')]"
+                        git commit -m "自动同步 [$(date +'%H:%M')]"
                         git push origin main
-                        echo "🚀 仓库同步成功！"
+                        echo "🚀 同步成功！"
+                    else
+                        echo "ℹ️ 文件内容无实质变化，跳过推送"
                     fi
                     cd ..
                     rm -rf target_repo
+                    rm -f ./temp_sub_store.json
+                else
+                    echo "❌ 克隆失败"
                 fi
             else
                 echo ">>> 暂无变动"
             fi
-            
             sleep 60
           done
