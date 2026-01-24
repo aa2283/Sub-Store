@@ -181,10 +181,15 @@ jobs:
                 DEST_PATH="$ROOT_DIR/target_repo/sub-store-nodes"
                 mkdir -p "$DEST_PATH"
 
-                # A. 安全复制：使用 find 避开通配符报错风险
-                # 这行代码会找到 subs 下所有文件，排除 old_ 开头的，然后拷过去
-                find "$ROOT_DIR/subs" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
+                # A. 安全复制：先清空目标文件夹里的旧订阅，再放入新订阅
+                echo "🧹 正在清理仓库中的旧订阅文件..."
+                # 只删除订阅文件（.yaml, .txt, .json），但保留 sub-store.json（如果存在）
+                find "$DEST_PATH" -type f ! -name "sub-store.json" -delete 2>/dev/null || true
 
+                echo "📂 正在同步新生成的订阅文件..."
+                # 找到 subs 下所有文件，排除以 old_ 开头的，然后拷过去
+                find "$ROOT_DIR/subs" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
+                
                 # B. 同步配置
                 if [ -f "$ROOT_DIR/$DATA_DIR/sub-store.json" ]; then
                   cp -f "$ROOT_DIR/$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
