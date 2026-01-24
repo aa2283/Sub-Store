@@ -139,26 +139,41 @@ jobs:
                 
                 # B. 同步到 v2ray_configs 仓库
                 rm -rf target_repo
+                # 使用你的 MY_PAT 进行克隆
                 if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
+                  # 1. 创建英文目录（稳妥）
                   mkdir -p target_repo/sub-store-nodes
-                  cp -f subs/all.yaml target_repo/sub-store-nodes/all.yaml
-                  cp -f subs/all.txt target_repo/sub-store-nodes/all.txt
                   
+                  # 2. 直接使用你想要的文件名
+                  cp -f subs/all.yaml target_repo/sub-store-nodes/sub-store.yaml
+                  cp -f subs/all.txt target_repo/sub-store-nodes/sub-store.txt
+                  
+                  # 3. 【核心步骤】必须进入克隆下来的仓库目录
                   cd target_repo
+                  
                   git config --local user.email "actions@github.com"
                   git config --local user.name "GitHub Action"
+                  
+                  # 4. 执行 Git 提交
                   git add .
-                  git commit -m "实时更新: $(date +'%H:%M:%S')" || echo ""
-                  git push origin main
+                  # 检查是否有内容变化，防止空提交报错
+                  if [ -n "$(git status --porcelain)" ]; then
+                    git commit -m "实时更新: $(date +'%H:%M:%S')"
+                    
+                    # 5. 拉取并推送（私有仓库也需要 rebase 以防万一）
+                    git pull --rebase origin main
+                    git push origin main
+                    echo "🚀 v2ray_configs 同步完成！"
+                  else
+                    echo "ℹ️ 内容无变动，跳过推送"
+                  fi
+                  
+                  # 6. 回到上级目录并清理
                   cd ..
-                  echo "🚀 v2ray_configs 同步完成！"
+                  rm -rf target_repo
+                else
+                  echo "❌ 克隆失败，请检查 MY_PAT 权限"
                 fi
-              else
-                echo "😴 内容暂无变动。"
-              fi
-            else
-              echo "⚠️ 尚未抓取到有效节点，请确保网页端订阅名正确且已点击[保存]。"
-            fi
             
             sleep 60
           done
