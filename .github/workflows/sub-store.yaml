@@ -132,8 +132,6 @@ jobs:
           # 1. 读取变量（支持多行）
           local_list="${{ vars.SUB_LIST }}"
           if [ -z "$local_list" ]; then echo "❌ 缺失 SUB_LIST"; exit 1; fi
-
-          # 按行读取
           readarray -t LINES <<< "$local_list"
 
           for i in {1..15}
@@ -141,33 +139,33 @@ jobs:
             echo ">>> 第 $i 次检查 <<<"
             HAS_UPDATE=false
             
+            # 2. 内部抓取循环
             for line in "${LINES[@]}"; do
               [[ -z "$line" ]] && continue
               
-              # 拆分 sub 和 yaml|txt|json
               NAME="${line%%:*}"
               FORMATS_STR="${line#*:}"
-              # 将 yaml|txt|json 转换为数组
               IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
               
               for fmt in "${FORMATS[@]}"; do
-                # 自动映射格式别名到 Sub-Store 的 target 参数
                 case $fmt in
                   yaml) TARGET="ClashMeta" ;;
                   json) TARGET="sing-box" ;;
                   txt)  TARGET="URI" ;;
-                  *)    TARGET="$fmt" ;; # 如果填的是原名也支持
+                  *)    TARGET="$fmt" ;;
                 esac
                 
                 ext=$fmt
                 FILE_PATH="subs/$NAME.$ext"
                 OLD_PATH="subs/old_$NAME.$ext"
                 
+                # 执行抓取
                 curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
                 
                 if [ -s "$FILE_PATH" ]; then
-                  if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH"; then
-                    echo "📢 发现更新: $NAME.$ext"
+                  # 只有第一次运行，或者文件内容有变动时才触发同步
+                  if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH" || [ "$i" -eq 1 ]; then
+                    echo "📢 发现变动: $NAME.$ext"
                     cp -f "$FILE_PATH" "$OLD_PATH"
                     HAS_UPDATE=true
                   fi
@@ -175,42 +173,41 @@ jobs:
               done
             done
 
-            # 2. 同步逻辑
+            # 3. 同步推送逻辑
             if [ "$HAS_UPDATE" = true ]; then
-                echo "🚀 执行同步（包含配置备份）..."
-                
+                echo "🚀 正在推送订阅文件与 sub-store.json 配置..."
                 rm -rf target_repo
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                     mkdir -p target_repo/sub-store-nodes
                     
-                    # 清理并复制订阅文件
-                    cd target_repo/sub-store-nodes
-                    rm -rf *
-                    cd ../..
+                    # A. 精准清理旧订阅（保留 json 备份文件不删，防止 clone 覆盖延迟）
+                    find target_repo/sub-store-nodes -type f ! -name 'sub-store.json' -delete
                     
-                    # 复制所有生成的订阅文件 (yaml, txt, json)
-                    for line in "${LINES[@]}"; do
-                      [[ -z "$line" ]] && continue
-                      NAME="${line%%:*}"
-                      cp -f subs/$NAME.* target_repo/sub-store-nodes/ 2>/dev/null || true
-                    done
-
-                    # --- 【关键添加】：备份核心配置文件 ---
-                    if [ -f "data/sub-store.json" ]; then
-                        cp -f data/sub-store.json target_repo/sub-store-nodes/sub-store.json
-                        echo "💾 配置 sub-store.json 已加入同步列表"
+                    # B. 复制最新的订阅文件
+                    cp -f subs/[!old]*.* target_repo/sub-store-nodes/ 2>/dev/null || true
+                    
+                    # C. 备份 sub-store.json 核心配置 (路径统一为 sub-store-data)
+                    if [ -f "sub-store-data/sub-store.json" ]; then
+                        cp -f sub-store-data/sub-store.json target_repo/sub-store-nodes/sub-store.json
+                        echo "✅ 已同步 sub-store.json 备份"
                     fi
                     
-                    # 提交
+                    # D. Git 提交
                     cd target_repo
                     git config --local user.email "actions@github.com"
                     git config --local user.name "GitHub Action"
                     git add .
                     if [ -n "$(git status --porcelain)" ]; then
-                        git commit -m "数据与配置同步: $(date +'%H:%M:%S')"
+                        git commit -m "数据同步 [$(date +'%H:%M')]"
                         git push origin main
-                        echo "✅ 订阅与配置均已安全同步！"
+                        echo "🚀 仓库同步成功！"
                     fi
                     cd ..
                     rm -rf target_repo
                 fi
+            else
+                echo ">>> 暂无变动"
+            fi
+            
+            sleep 60
+          done
