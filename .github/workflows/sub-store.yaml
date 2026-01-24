@@ -127,29 +127,27 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 初始化
           ROOT_DIR=$(pwd)
           DATA_DIR="sub-store-data"
           mkdir -p subs
           
-          # 处理变量（防止换行符导致的解析错误）
           local_list="${{ vars.SUB_LIST }}"
-          [ -z "$local_list" ] && local_list="sub:yaml|txt|json" 
-          readarray -t LINES <<< "$local_list"
+          # 处理可能的换行和空格
+          readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//')"
 
           for i in {1..15}
           do
             echo ">>> 第 $i 次检查 <<<"
             HAS_UPDATE=false
 
-            # 2. 抓取逻辑
             for line in "${LINES[@]}"; do
-              [[ -z "$line" || "$line" == " "* ]] && continue
+              [[ -z "$line" ]] && continue
               NAME="${line%%:*}"
               FORMATS_STR="${line#*:}"
               IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
               
               for fmt in "${FORMATS[@]}"; do
+                # 核心修复：确保映射关系绝对正确
                 case $fmt in
                   yaml) TARGET="ClashMeta" ;;
                   json) TARGET="sing-box" ;;
@@ -160,11 +158,13 @@ jobs:
                 FILE_PATH="subs/$NAME.$fmt"
                 OLD_PATH="subs/old_$NAME.$fmt"
                 
-                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH" || true
+                # 下载并保存
+                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
                 
                 if [ -s "$FILE_PATH" ]; then
+                  # 第一次强制更新或内容变化
                   if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH" || [ "$i" -eq 1 ]; then
-                    echo "📢 变动检测: $NAME.$fmt"
+                    echo "📢 检测到变动: $NAME.$fmt"
                     cp -f "$FILE_PATH" "$OLD_PATH"
                     HAS_UPDATE=true
                   fi
@@ -172,40 +172,40 @@ jobs:
               done
             done
 
-            # 3. 同步推送逻辑 (重构版：绝对路径 + 安全复制)
             if [ "$HAS_UPDATE" = true ]; then
-              echo "🚀 启动同步..."
-              rm -rf target_repo || true
+              echo "🚀 启动精准同步..."
+              rm -rf target_repo
               
               if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                 DEST_PATH="$ROOT_DIR/target_repo/sub-store-nodes"
+                cd "$ROOT_DIR/target_repo"
+                # 修复 exit 128：移除可能的子模块缓存
+                git rm -r --cached target_repo 2>/dev/null || true
                 mkdir -p "$DEST_PATH"
 
-                # A. 安全复制：先清空目标文件夹里的旧订阅，再放入新订阅
-                echo "🧹 正在清理仓库中的旧订阅文件..."
-                # 只删除订阅文件（.yaml, .txt, .json），但保留 sub-store.json（如果存在）
+                # A. 【关键】清理旧账：删除所有旧订阅文件，防止 all.txt 残留
+                echo "🧹 清理仓库冗余文件..."
                 find "$DEST_PATH" -type f ! -name "sub-store.json" -delete 2>/dev/null || true
-
-                echo "📂 正在同步新生成的订阅文件..."
-                # 找到 subs 下所有文件，排除以 old_ 开头的，然后拷过去
-                find "$ROOT_DIR/subs" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
                 
-                # B. 同步配置
+                # B. 放入新生成的文件
+                echo "📂 写入最新节点..."
+                find "$ROOT_DIR/subs" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
+
+                # C. 同步配置备份
                 if [ -f "$ROOT_DIR/$DATA_DIR/sub-store.json" ]; then
                   cp -f "$ROOT_DIR/$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
-                  echo "✅ sub-store.json 已加入备份"
+                  echo "✅ sub-store.json 备份已更新"
                 fi
 
-                # C. 提交
-                cd "$ROOT_DIR/target_repo"
+                # D. Git 提交推送
                 git config --local user.email "actions@github.com"
                 git config --local user.name "GitHub Action"
                 git add .
-                
-                # 检查是否有变动，避免 git commit 报错
                 if ! git diff --cached --quiet; then
                   git commit -m "自动同步: $(date +'%H:%M:%S')"
-                  git push origin main && echo "🚀 成功推送！"
+                  git push origin main && echo "🚀 仓库同步成功！"
+                else
+                  echo "ℹ️ 内容无变动，跳过推送"
                 fi
                 
                 cd "$ROOT_DIR"
