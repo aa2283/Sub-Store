@@ -131,11 +131,11 @@ jobs:
                 docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
                 
                 # A. 同步到当前 Sub-Store 仓库
-                git config --local user.email "actions@github.com"
-                git config --local user.name "GitHub Action"
-                git add .
-                git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
-                git push origin main
+                #git config --local user.email "actions@github.com"
+                #git config --local user.name "GitHub Action"
+                #git add .
+                #git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
+                #git push origin main
                 
                 # B. 同步到 v2ray_configs 仓库
                 rm -rf target_repo
