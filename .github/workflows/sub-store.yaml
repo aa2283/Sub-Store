@@ -103,59 +103,57 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 准备临时存放目录
           mkdir -p subs
           
+          # 从变量读取列表
+          local_list="${{ vars.SUB_LIST || 'ClashMeta,URI' }}"
+          IFS=',' read -ra ITEMS <<< "$local_list"
+
           for i in {1..15}
           do
-            echo ">>> 第 $i 次实时同步检查 <<<"
-            
-            # 2. 访问链接并直接保存为最终文件名
-            # 访问即更新，保存即命名
-            curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/sub-store.yaml
-            curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/sub-store.txt
-            
-            # 3. 检查文件是否有效（大于 200 字节说明不是空文件）
-            SIZE=$(wc -c < subs/sub-store.yaml)
-            echo "📊 当前 sub-store.yaml 大小: $SIZE 字节"
-            
-            if [ $SIZE -gt 200 ]; then
-                # 4. 准备推送至私有仓库
+            # 1. 静默抓取
+            for target in "${ITEMS[@]}"; do
+              ext=$([ "$target" == "ClashMeta" ] && echo "yaml" || echo "txt")
+              curl -s "http://127.0.0.1:3000/download/sub?target=$target" -o "subs/new_sub.$ext"
+            done
+
+            # 2. 核心判断：对比新抓取的 yaml 和本地旧的 yaml
+            # 如果 all.yaml 不存在，或者新旧文件内容不同
+            if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_sub.yaml" "subs/all.yaml"; then
+                
+                SIZE=$(wc -c < subs/new_sub.yaml)
+                echo "📢 【检测到更新】当前大小: $SIZE 字节，正在同步至仓库..."
+
+                # 更新本地对比基准
+                cp -f subs/new_sub.yaml subs/all.yaml
+                # 准备最终推送的文件
+                cp -f subs/new_sub.yaml subs/sub-store.yaml
+                cp -f subs/new_sub.txt subs/sub-store.txt
+                
+                # 3. 推送流程
                 rm -rf target_repo
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                    
-                    # 确保目标文件夹存在
                     mkdir -p target_repo/sub-store-nodes
+                    cp -f subs/sub-store.* target_repo/sub-store-nodes/
                     
-                    # 将刚抓取的文件移动到目标文件夹
-                    cp -f subs/sub-store.yaml target_repo/sub-store-nodes/sub-store.yaml
-                    cp -f subs/sub-store.txt target_repo/sub-store-nodes/sub-store.txt
-                    
-                    # 5. 进入私有仓库目录执行提交
                     cd target_repo
                     git config --local user.email "actions@github.com"
                     git config --local user.name "GitHub Action"
                     
                     git add .
-                    # 检查是否有实际变动
+                    # 再次确认是否有 git 层的变动
                     if [ -n "$(git status --porcelain)" ]; then
-                        git commit -m "节点实时同步: $(date +'%H:%M:%S')"
-                        git pull --rebase origin main
+                        git commit -m "节点更新: $(date +'%H:%M:%S')"
                         git push origin main
-                        echo "🚀 成功：文件已同步到 v2ray_configs/sub-store-nodes/"
-                    else
-                        echo "ℹ️ 文件内容无变化，无需提交"
+                        echo "🚀 仓库同步成功！"
                     fi
-                    
                     cd ..
                     rm -rf target_repo
-                else
-                    echo "❌ 错误：克隆私有仓库失败，请检查 MY_PAT"
                 fi
             else
-                echo "⚠️ 警告：抓取数据过小，可能转换尚未完成"
+                # 如果没变动，只打印一行极其简洁的日志（或者不打印）
+                echo ">>> 第 $i 次检查：内容无变化"
             fi
             
-            echo "-----------------------------------"
             sleep 60
           done
