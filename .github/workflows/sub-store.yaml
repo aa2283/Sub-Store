@@ -127,14 +127,14 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 初始化根目录和变量
+          # 1. 初始化
           ROOT_DIR=$(pwd)
           DATA_DIR="sub-store-data"
           mkdir -p subs
-
-          # 读取并处理变量
+          
+          # 处理变量（防止换行符导致的解析错误）
           local_list="${{ vars.SUB_LIST }}"
-          if [ -z "$local_list" ]; then echo "❌ 缺失 SUB_LIST"; exit 1; fi
+          [ -z "$local_list" ] && local_list="sub:yaml|txt|json" 
           readarray -t LINES <<< "$local_list"
 
           for i in {1..15}
@@ -142,9 +142,9 @@ jobs:
             echo ">>> 第 $i 次检查 <<<"
             HAS_UPDATE=false
 
-            # 2. 内部抓取循环
+            # 2. 抓取逻辑
             for line in "${LINES[@]}"; do
-              [[ -z "$line" ]] && continue
+              [[ -z "$line" || "$line" == " "* ]] && continue
               NAME="${line%%:*}"
               FORMATS_STR="${line#*:}"
               IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
@@ -160,11 +160,9 @@ jobs:
                 FILE_PATH="subs/$NAME.$fmt"
                 OLD_PATH="subs/old_$NAME.$fmt"
                 
-                # 抓取文件
-                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
+                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH" || true
                 
                 if [ -s "$FILE_PATH" ]; then
-                  # 如果是第一次运行或文件有变化
                   if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH" || [ "$i" -eq 1 ]; then
                     echo "📢 变动检测: $NAME.$fmt"
                     cp -f "$FILE_PATH" "$OLD_PATH"
@@ -174,47 +172,42 @@ jobs:
               done
             done
 
-            # 3. 仓库同步逻辑
+            # 3. 同步推送逻辑 (重构版：绝对路径 + 安全复制)
             if [ "$HAS_UPDATE" = true ]; then
-              echo "🚀 启动同步流程..."
-              rm -rf target_repo
+              echo "🚀 启动同步..."
+              rm -rf target_repo || true
               
               if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                 DEST_PATH="$ROOT_DIR/target_repo/sub-store-nodes"
                 mkdir -p "$DEST_PATH"
 
-                # A. 复制订阅文件 (避免使用复杂的通配符)
-                cd "$ROOT_DIR/subs"
-                for f in *.*; do
-                  if [[ "$f" != old_* ]]; then
-                    cp -f "$f" "$DEST_PATH/" 2>/dev/null || true
-                  fi
-                done
+                # A. 安全复制：使用 find 避开通配符报错风险
+                # 这行代码会找到 subs 下所有文件，排除 old_ 开头的，然后拷过去
+                find "$ROOT_DIR/subs" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
 
-                # B. 同步 sub-store.json
+                # B. 同步配置
                 if [ -f "$ROOT_DIR/$DATA_DIR/sub-store.json" ]; then
                   cp -f "$ROOT_DIR/$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
-                  echo "✅ sub-store.json 已备份"
+                  echo "✅ sub-store.json 已加入备份"
                 fi
 
-                # C. 推送到仓库
+                # C. 提交
                 cd "$ROOT_DIR/target_repo"
                 git config --local user.email "actions@github.com"
                 git config --local user.name "GitHub Action"
                 git add .
-                if [ -n "$(git status --porcelain)" ]; then
+                
+                # 检查是否有变动，避免 git commit 报错
+                if ! git diff --cached --quiet; then
                   git commit -m "自动同步: $(date +'%H:%M:%S')"
-                  git push origin main
-                  echo "🚀 仓库推送成功！"
+                  git push origin main && echo "🚀 成功推送！"
                 fi
                 
-                # D. 清理并回归根目录
                 cd "$ROOT_DIR"
                 rm -rf target_repo
               fi
             else
               echo ">>> 暂无变动"
             fi
-            
             sleep 60
           done
