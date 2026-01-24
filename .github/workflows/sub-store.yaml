@@ -103,79 +103,67 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
+          # 确保临时工作目录存在
+          mkdir -p subs
+          
           for i in {1..15}
           do
             echo ">>> 第 $i 次检查 (监听 sub 订阅)..."
             
-            # 1. 强制激活后端 API 状态
+            # 1. 强制激活并抓取
             timeout 60s bash -c 'until curl -s http://127.0.0.1:3000 > /dev/null; do sleep 2; done'
             curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
-            sleep 2
             
-            # 2. 抓取两个目标格式到临时文件
-            # 如果你的订阅名不叫 sub，请把下面 URL 里的 sub 改掉
             curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/new_clash.yaml
             curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/new_uri.txt
             
-            # 3. 校验数据有效性 (防止抓到报错网页)
+            # 2. 校验数据
             if grep -q "proxies" subs/new_clash.yaml || grep -q "://" subs/new_uri.txt; then
               
-              # 4. 对比是否有变动 (只要其中一个变了就推送)
-              if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_clash.yaml" "subs/all.yaml" || ! cmp -s "subs/new_uri.txt" "subs/all.txt"; then
-                echo "📢 检测到订阅内容更新，正在执行同步..."
+              # 3. 对比变动
+              if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_clash.yaml" "subs/all.yaml"; then
+                echo "📢 检测到内容更新，正在同步至 v2ray_configs..."
                 
                 cp subs/new_clash.yaml subs/all.yaml
                 cp subs/new_uri.txt subs/all.txt
                 
-                # 备份 sub-store.json
-                docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json
-                
-                # A. 同步到当前 Sub-Store 仓库
-                #git config --local user.email "actions@github.com"
-                #git config --local user.name "GitHub Action"
-                #git add .
-                #git commit -m "自动存档: $(date +'%H:%M:%S')" || echo ""
-                #git push origin main
-                
-                # B. 同步到 v2ray_configs 仓库
+                # 4. 执行推送逻辑
                 rm -rf target_repo
-                # 使用你的 MY_PAT 进行克隆
-                if git clone https://${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                  # 1. 创建英文目录（稳妥）
-                  mkdir -p target_repo/sub-store-nodes
+                # 显式使用 x-access-token 方式处理私有仓库
+                if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
                   
-                  # 2. 直接使用你想要的文件名
+                  # 核心：在 target_repo 下建立文件夹
+                  mkdir -p target_repo/sub-store-nodes
                   cp -f subs/all.yaml target_repo/sub-store-nodes/sub-store.yaml
                   cp -f subs/all.txt target_repo/sub-store-nodes/sub-store.txt
                   
-                  # 3. 【核心步骤】必须进入克隆下来的仓库目录
+                  # 【关键】跳转进仓库目录执行操作
                   cd target_repo
-                  
                   git config --local user.email "actions@github.com"
                   git config --local user.name "GitHub Action"
                   
-                  # 4. 执行 Git 提交
                   git add .
-                  # 检查是否有内容变化，防止空提交报错
                   if [ -n "$(git status --porcelain)" ]; then
-                    git commit -m "实时更新: $(date +'%H:%M:%S')"
-                    
-                    # 5. 拉取并推送（私有仓库也需要 rebase 以防万一）
+                    git commit -m "🔖 节点更新: $(date +'%H:%M:%S')"
                     git pull --rebase origin main
                     git push origin main
-                    echo "🚀 v2ray_configs 同步完成！"
+                    echo "🚀 成功：文件已推送到 v2ray_configs/sub-store-nodes/"
                   else
-                    echo "ℹ️ 内容无变动，跳过推送"
+                    echo "ℹ️ 目标仓库内文件已是最新，无需重复推送"
                   fi
                   
-                  # 6. 回到上级目录并清理
+                  # 返回上一级并清理
                   cd ..
                   rm -rf target_repo
                 else
-                  echo "❌ 克隆失败，请检查 MY_PAT 权限"
-                fi # <--- 对应 if git clone
-              fi # <--- 对应 if [ ! -f ... ] (对比变动)
-            fi # <--- 对应 if grep (数据校验)
+                  echo "❌ 失败：无法克隆私有仓库，请检查 MY_PAT 权限"
+                fi
+              else
+                echo "ℹ️ 本次抓取内容无变动"
+              fi
+            else
+              echo "⚠️ 警告：抓取数据无效 (API 可能尚未就绪)"
+            fi
             
             sleep 60
-          done # <--- 对应 for 循环
+          done <--- 对应 for 循环
