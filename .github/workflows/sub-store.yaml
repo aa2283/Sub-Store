@@ -103,62 +103,59 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 环境准备
+          # 1. 准备临时存放目录
           mkdir -p subs
-          mkdir -p sub-store-data
           
           for i in {1..15}
           do
-            echo ">>> 第 $i 次检查 (监听 sub 订阅)..."
+            echo ">>> 第 $i 次实时同步检查 <<<"
             
-            # 激活后端
-            timeout 60s bash -c 'until curl -s http://127.0.0.1:3000 > /dev/null; do sleep 2; done'
-            curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
-            sleep 2
+            # 2. 访问链接并直接保存为最终文件名
+            # 访问即更新，保存即命名
+            curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/sub-store.yaml
+            curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/sub-store.txt
             
-            # 2. 抓取
-            curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/new_clash.yaml
-            curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/new_uri.txt
+            # 3. 检查文件是否有效（大于 200 字节说明不是空文件）
+            SIZE=$(wc -c < subs/sub-store.yaml)
+            echo "📊 当前 sub-store.yaml 大小: $SIZE 字节"
             
-            # 3. 数据校验
-            if grep -q "proxies" subs/new_clash.yaml || grep -q "://" subs/new_uri.txt; then
-              
-              # 4. 变动对比
-              if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_clash.yaml" "subs/all.yaml"; then
-                echo "📢 检测到变动，开始执行同步..."
-                
-                cp subs/new_clash.yaml subs/all.yaml
-                cp subs/new_uri.txt subs/all.txt
-                
-                # 备份数据
-                docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json || echo "Docker cp skipped"
-                
-                # B. 同步到 v2ray_configs 仓库
+            if [ $SIZE -gt 200 ]; then
+                # 4. 准备推送至私有仓库
                 rm -rf target_repo
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                  mkdir -p target_repo/sub-store-nodes
-                  cp -f subs/all.yaml target_repo/sub-store-nodes/sub-store.yaml
-                  cp -f subs/all.txt target_repo/sub-store-nodes/sub-store.txt
-                  
-                  cd target_repo
-                  git config --local user.email "actions@github.com"
-                  git config --local user.name "GitHub Action"
-                  
-                  git add .
-                  if [ -n "$(git status --porcelain)" ]; then
-                    git commit -m "实时更新: $(date +'%H:%M:%S')"
-                    git pull --rebase origin main
-                    git push origin main
-                    echo "🚀 v2ray_configs 同步完成！"
-                  else
-                    echo "ℹ️ 内容已存在，跳过推送"
-                  fi
-                  cd ..
-                  rm -rf target_repo
+                    
+                    # 确保目标文件夹存在
+                    mkdir -p target_repo/sub-store-nodes
+                    
+                    # 将刚抓取的文件移动到目标文件夹
+                    cp -f subs/sub-store.yaml target_repo/sub-store-nodes/sub-store.yaml
+                    cp -f subs/sub-store.txt target_repo/sub-store-nodes/sub-store.txt
+                    
+                    # 5. 进入私有仓库目录执行提交
+                    cd target_repo
+                    git config --local user.email "actions@github.com"
+                    git config --local user.name "GitHub Action"
+                    
+                    git add .
+                    # 检查是否有实际变动
+                    if [ -n "$(git status --porcelain)" ]; then
+                        git commit -m "节点实时同步: $(date +'%H:%M:%S')"
+                        git pull --rebase origin main
+                        git push origin main
+                        echo "🚀 成功：文件已同步到 v2ray_configs/sub-store-nodes/"
+                    else
+                        echo "ℹ️ 文件内容无变化，无需提交"
+                    fi
+                    
+                    cd ..
+                    rm -rf target_repo
+                else
+                    echo "❌ 错误：克隆私有仓库失败，请检查 MY_PAT"
                 fi
-              fi
+            else
+                echo "⚠️ 警告：抓取数据过小，可能转换尚未完成"
             fi
             
-            echo "--- 等待下一次轮询 ---"
+            echo "-----------------------------------"
             sleep 60
           done
