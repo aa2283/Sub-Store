@@ -24,24 +24,23 @@ jobs:
           
       - name: 1-2. 载入备份
         env:
-          MY_TOKEN: ${{ secrets.MY_PAT }} # 必须确保 Secret 名字正确
+          MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 创建配置目录
-          mkdir -p data
+          # 统一使用 sub-store-data
+          mkdir -p sub-store-data
           
-          # 尝试从你的私有仓库拉取现有的配置
           echo "📥 正在拉取 sub-store.json 备份..."
           rm -rf backup_repo
           if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo; then
               if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
-                  cp -f backup_repo/sub-store-nodes/sub-store.json data/sub-store.json
+                  # 这里的路径一定要改成 sub-store-data
+                  cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-data/sub-store.json
                   echo "✅ 已恢复之前的 Sub-Store 配置"
               else
                   echo "ℹ️ 仓库中未找到备份，将以初始状态启动"
               fi
               rm -rf backup_repo
           fi
-
           # 启动 Sub-Store 容器
           #docker run -d --name sub-store -v $(pwd)/data:/opt/sub-store/data -p 3000:3000 xream/sub-store
           
@@ -52,7 +51,7 @@ jobs:
         run: |
           mkdir -p sub-store-data
           docker run -d --name substore-svc \
-            -v $(pwd)/sub-store-data:/opt/app/data \
+            -v $(pwd)/sub-store-data:/opt/sub-store/data
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 15
 
