@@ -103,67 +103,62 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 确保临时工作目录存在
+          # 1. 环境准备
           mkdir -p subs
+          mkdir -p sub-store-data
           
           for i in {1..15}
           do
             echo ">>> 第 $i 次检查 (监听 sub 订阅)..."
             
-            # 1. 强制激活并抓取
+            # 激活后端
             timeout 60s bash -c 'until curl -s http://127.0.0.1:3000 > /dev/null; do sleep 2; done'
             curl -s -o /dev/null "https://sub-store.vercel.app/?api=http://127.0.0.1:3000"
+            sleep 2
             
+            # 2. 抓取
             curl -s "http://127.0.0.1:3000/download/sub?target=ClashMeta" -o subs/new_clash.yaml
             curl -s "http://127.0.0.1:3000/download/sub?target=URI" -o subs/new_uri.txt
             
-            # 2. 校验数据
+            # 3. 数据校验
             if grep -q "proxies" subs/new_clash.yaml || grep -q "://" subs/new_uri.txt; then
               
-              # 3. 对比变动
+              # 4. 变动对比
               if [ ! -f "subs/all.yaml" ] || ! cmp -s "subs/new_clash.yaml" "subs/all.yaml"; then
-                echo "📢 检测到内容更新，正在同步至 v2ray_configs..."
+                echo "📢 检测到变动，开始执行同步..."
                 
                 cp subs/new_clash.yaml subs/all.yaml
                 cp subs/new_uri.txt subs/all.txt
                 
-                # 4. 执行推送逻辑
+                # 备份数据
+                docker cp substore-svc:/opt/app/data/sub-store.json ./sub-store-data/sub-store.json || echo "Docker cp skipped"
+                
+                # B. 同步到 v2ray_configs 仓库
                 rm -rf target_repo
-                # 显式使用 x-access-token 方式处理私有仓库
                 if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git target_repo; then
-                  
-                  # 核心：在 target_repo 下建立文件夹
                   mkdir -p target_repo/sub-store-nodes
                   cp -f subs/all.yaml target_repo/sub-store-nodes/sub-store.yaml
                   cp -f subs/all.txt target_repo/sub-store-nodes/sub-store.txt
                   
-                  # 【关键】跳转进仓库目录执行操作
                   cd target_repo
                   git config --local user.email "actions@github.com"
                   git config --local user.name "GitHub Action"
                   
                   git add .
                   if [ -n "$(git status --porcelain)" ]; then
-                    git commit -m "🔖 节点更新: $(date +'%H:%M:%S')"
+                    git commit -m "实时更新: $(date +'%H:%M:%S')"
                     git pull --rebase origin main
                     git push origin main
-                    echo "🚀 成功：文件已推送到 v2ray_configs/sub-store-nodes/"
+                    echo "🚀 v2ray_configs 同步完成！"
                   else
-                    echo "ℹ️ 目标仓库内文件已是最新，无需重复推送"
+                    echo "ℹ️ 内容已存在，跳过推送"
                   fi
-                  
-                  # 返回上一级并清理
                   cd ..
                   rm -rf target_repo
-                else
-                  echo "❌ 失败：无法克隆私有仓库，请检查 MY_PAT 权限"
                 fi
-              else
-                echo "ℹ️ 本次抓取内容无变动"
               fi
-            else
-              echo "⚠️ 警告：抓取数据无效 (API 可能尚未就绪)"
             fi
             
+            echo "--- 等待下一次轮询 ---"
             sleep 60
-          done <--- 对应 for 循环
+          done
