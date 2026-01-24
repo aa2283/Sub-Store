@@ -51,7 +51,7 @@ jobs:
         run: |
           mkdir -p sub-store-data
           docker run -d --name substore-svc \
-            -v $(pwd)/sub-store-data:/opt/sub-store/data
+            -v $(pwd)/sub-store-data:/opt/sub-store/data \
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 15
 
