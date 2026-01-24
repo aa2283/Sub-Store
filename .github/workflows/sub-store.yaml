@@ -173,7 +173,9 @@ jobs:
                   rm -rf target_repo
                 else
                   echo "❌ 克隆失败，请检查 MY_PAT 权限"
-                fi
+                fi # <--- 对应 if git clone
+              fi # <--- 对应 if [ ! -f ... ] (对比变动)
+            fi # <--- 对应 if grep (数据校验)
             
             sleep 60
-          done
+          done # <--- 对应 for 循环
