@@ -124,8 +124,10 @@ jobs:
         run: |
           # 1. 初始化路径
           ROOT_DIR=$(pwd)
-          DATA_DIR="$ROOT_DIR/sub-store-nodes"  # 这里也要对齐
+          DATA_DIR="$ROOT_DIR/sub-store-nodes" 
+          SUBS_DIR="$ROOT_DIR/subs"            # <--- 必须加上这一行
           REPO_DIR="$ROOT_DIR/target_repo"
+          mkdir -p "$SUBS_DIR"                 # <--- 必须加上这一行
 
           # 2. 建立初始快照（防止重复推送的关键）
           [ -f "$DATA_DIR/sub-store.json" ] && cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" || touch "$ROOT_DIR/snapshot.json"
