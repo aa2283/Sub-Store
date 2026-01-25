@@ -22,13 +22,20 @@ jobs:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
           
-      - name: 1-2. 载入备份
+      - name: 2. 启动服务 (挂载持久化配置)
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }} # 必须确保 Secret 名字正确
         run: |
-          # 创建配置目录
-          mkdir -p data
-          
+          mkdir -p sub-store-data
+          docker run -d --name substore-svc \
+            -v $(pwd)/sub-store-data:/opt/app/data \
+            -p 3000:3000 -p 3001:3001 xream/sub-store
+          sleep 15
+
+          # 模拟访问激活
+          curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
+          curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+
           # 尝试从你的私有仓库拉取现有的配置
           echo "📥 正在拉取 sub-store.json 备份..."
           rm -rf backup_repo
@@ -47,14 +54,6 @@ jobs:
           
           # 等待启动...
           sleep 10
-
-      - name: 2. 启动服务 (挂载持久化配置)
-        run: |
-          mkdir -p sub-store-data
-          docker run -d --name substore-svc \
-            -v $(pwd)/sub-store-data:/opt/app/data \
-            -p 3000:3000 -p 3001:3001 xream/sub-store
-          sleep 15
 
       - name: 3. 开启隧道并提取链接
         run: |
