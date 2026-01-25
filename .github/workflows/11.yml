@@ -161,31 +161,32 @@ jobs:
                 echo "💤 本轮任务完成，等待下次巡检..."
                 sleep 60
             else
-                echo "🚨 后端处于休眠或空载状态，启动『自激活』注入流程..."
+                echo "🚨 发现后端数据未加载，执行『API 强灌 + 深度激活』流程..."
                 git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_tmp
                 cp -f backup_tmp/sub-store-nodes/sub-store.json "$ROOT_DIR/snapshot.json"
                 rm -rf backup_tmp
 
                 if [ -s "$ROOT_DIR/snapshot.json" ]; then
-                   # 1. 物理灌入
+                   # 1. 物理备份（双保险）
                    cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /opt/app/data/sub-store.json"
-                   docker exec substore-svc chmod 777 /opt/app/data/sub-store.json
                    
-                   # 2. 重启以确保文件被探测到
-                   docker restart substore-svc
-                   echo "♻️ 容器已重启，准备进行虚拟访问激活..."
-                   sleep 30
+                   # 2. 【核心】直接调用 API 导入 JSON 数据包
+                   # 很多时候 API 导入比读取磁盘文件更有效，因为它直接操作内存
+                   echo "📤 正在向 API 端口推送 331KB 核心数据..."
+                   curl -s -X POST "http://127.0.0.1:3000/api/utils/import" \
+                        -H "Content-Type: application/json" \
+                        --data-binary @"$ROOT_DIR/snapshot.json" || echo "⚠️ API 导入请求失败"
                    
-                   # 3. 【核心修改】模拟浏览器访问：请求订阅列表接口
-                   # 这相当于你在浏览器打开 https://sub-store.vercel.app/subs?api=...
-                   echo "🔌 正在模拟前端访问以激活后端内存..."
+                   # 3. 深度激活：模拟多个关键路径访问
+                   echo "🔌 触发后端多维激活..."
                    curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
+                   curl -s "http://127.0.0.1:3000/api/configs" > /dev/null
                    
-                   # 4. 再次发送同步信号
+                   # 4. 强制执行同步指令
                    curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
                    
-                   echo "✨ 激活指令发送完毕，等待后端就绪..."
-                   sleep 20
+                   echo "✨ 强灌与激活完成，等待后端内存沉淀..."
+                   sleep 30
                 fi
             fi
           done
