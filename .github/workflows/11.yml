@@ -1,9 +1,16 @@
-name: Sub-Store 终极自动化同步 API_URL 最终版
+name: Sub-Store 自动化同步11
 
 on:
-  workflow_dispatch: 
+  workflow_dispatch: # 保留手动启动按钮，方便随时调试
   #schedule:
-    #- cron: '0 */6 * * *' # 每 6 小时运行一次
+    # 这里的 cron 表达式：分钟 小时 日 月 周 (UTC 时间)
+    # 北京时间 08:00 = UTC 00:00
+    # - cron: '0 0 * * *'
+    
+    # 如果你想每 6 小时自动开机加工一次（北京时间 00:00, 06:00, 12:00, 18:00）
+     #- cron: '0 */6 * * *'
+
+# ... 后面接你之前的 jobs 部分 ...
 
 jobs:
   build:
@@ -14,22 +21,8 @@ jobs:
         with:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
-          
-      
 
-      - name: 2. 启动服务 (路径对齐版)
-        run: |
-          mkdir -p sub-store-nodes
-          # 1. 挂载路径对齐到 /opt/app/data
-          # 2. 端口对齐: 3000 为后端，3001 为前端
-          # 3. 环境变量对齐混淆路径
-          docker run -d --name substore-svc \
-            -v $(pwd)/sub-store-nodes:/opt/app/data \
-            -p 3000:3000 -p 3001:3001 xream/sub-store
-          echo "⏳ 等待容器初始化..."
-          sleep 20
-
-      - name: 3. 开启隧道并提取链接
+      - name: 2. 开启隧道并提取链接
         run: |
           # 1. 下载并准备
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
@@ -67,7 +60,7 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 4. 域名同步至 Cloudflare KV
+      - name: 3. 域名同步至 Cloudflare KV
         env:
           KV_KEY: "URL_3000" 
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -97,96 +90,138 @@ jobs:
             exit 1
           fi
       # ================== 域名同步模块结束 ==================
-
-      - name: 5. 哨兵监听 (纯净 API 路径版)
+          
+      - name: 4. 准备数据并启动服务
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
+          mkdir -p sub-store-data
+          
+          # 第一步：先拉取备份，把文件放好！
+          echo "📥 正在拉取备份..."
+          git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
+          if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
+              cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-data/sub-store.json
+              echo "✅ 备份文件已到位"
+          fi
+          rm -rf backup_repo
+
+          # 第二步：带着“有货”的目录启动 Docker
+          docker run -d --name substore-svc \
+            -v $(pwd)/sub-store-data:/opt/app/data \
+            -p 3000:3000 -p 3001:3001 xream/sub-store
+          
+          # 第三步：等待 Docker 彻底启动完全
+          sleep 20 
+
+          # 第四步：此时服务里已经有配置了，发送激活指令才有效
+          echo "🚀 正在激活订阅同步..."
+          curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
+          curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+          
+          echo "✅ Sub-Store 容器启动成功，配置已载入并完成初始化激活！"
+          
+      - name: 5. 精准监听下载链接并实时推送
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          # 1. 初始化绝对路径
           ROOT_DIR=$(pwd)
-          DATA_DIR="$ROOT_DIR/sub-store-nodes"
+          DATA_DIR="$ROOT_DIR/sub-store-data"
           SUBS_DIR="$ROOT_DIR/subs"
           REPO_DIR="$ROOT_DIR/target_repo"
-          mkdir -p "$SUBS_DIR" "$DATA_DIR"
+          
+          mkdir -p "$SUBS_DIR"
+          
+          # 处理变量
+          local_list="${{ vars.SUB_LIST }}"
+          readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//')"
 
-          # 1. 核心同步函数：直接访问 3000 端口提取订阅
-          do_sync_push() {
-            echo "📥 正在从后端提取节点数据..."
-            # 这里的 SUB_LIST 建议在 vars 里配置，或者直接写在这里
-            local_list="sub:yaml|txt|json
-            yml:yaml|txt|json
-            zh:json"
-            readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            
-            rm -rf "$REPO_DIR"
-            git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git "$REPO_DIR"
-            
+          # 模拟访问激活
+          curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
+          curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+                
+          sleep 30
+
+          for i in {1..15}
+          do
+            echo ">>> 第 $i 次检查 <<<"
+            HAS_UPDATE=false
+
+            # 2. 抓取逻辑
             for line in "${LINES[@]}"; do
-              [ -z "$line" ] && continue
-              NAME=$(echo $line | cut -d: -f1)
-              FMTS=$(echo $line | cut -d: -f2 | tr '|' ' ')
-              for fmt in $FMTS; do
-                echo "抓取: $NAME ($fmt)"
-                # 标准路径下载：不带任何混淆前缀
-                curl -s --fail "http://127.0.0.1:3000/download/$NAME?target=$fmt" -o "$SUBS_DIR/$NAME.$fmt" || echo "⚠️ 失败: $NAME"
+              [[ -z "$line" ]] && continue
+              NAME="${line%%:*}"
+              FORMATS_STR="${line#*:}"
+              IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
+              
+              for fmt in "${FORMATS[@]}"; do
+                fmt="${fmt//$'\r'/}"
+                case $fmt in
+                  yaml) TARGET="ClashMeta" ;;
+                  json) TARGET="sing-box" ;;
+                  txt)  TARGET="URI" ;;
+                  *)    TARGET="$fmt" ;;
+                esac
+                
+                FILE_PATH="$SUBS_DIR/$NAME.$fmt" && SUB_STORE_JSON="$DATA_DIR/sub-store.json"
+                OLD_PATH="$SUBS_DIR/old_$NAME.$fmt" && OLD_SUB_STORE_JSON="$DATA_DIR/old_sub-store.json"
+                
+                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH" || true
+                
+                if [ -s "$FILE_PATH" ]; then && if [ -f "$SUB_STORE_JSON" ]; then
+                  if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH" || [ "$i" -eq 1 ]; then && if [ ! -f "$OLD_SUB_STORE_JSON" ] || ! cmp -s "$SUB_STORE_JSON" "$OLD_SUB_STORE_JSON"; then
+                    echo "📢 检测到变动: $NAME.$fmt" && echo "📢 sub-store.json 发生变动"
+                    cp -f "$FILE_PATH" "$OLD_PATH" && cp -f "$SUB_STORE_JSON" "$OLD_SUB_STORE_JSON"
+                    HAS_UPDATE=true && HAS_UPDATE=true
+                  fi
+                fi
+
+                 fi
+                fi
               done
             done
-            
-            # 物理覆盖回仓库
-            cp -f "$DATA_DIR/sub-store.json" "$REPO_DIR/sub-store-nodes/sub-store.json"
-            cp -f "$SUBS_DIR"/* "$REPO_DIR/sub-store-nodes/" 2>/dev/null || true
-            
-            cd "$REPO_DIR"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add .
-            if ! git diff --cached --quiet; then
-              git commit -m "Automated Sync: $(date +'%Y-%m-%d %H:%M')"
-              git push origin main && echo "🚀 仓库同步已完成"
-            fi
-            cd "$ROOT_DIR"
-          }
 
-          # 2. 哨兵循环监测
-          for i in {1..15}; do
-            echo ">>> 第 $i 次巡检 <<<"
-            
-            # 检查内部对齐路径 /opt/app/data
-            JSON_CONTENT=$(docker exec substore-svc cat /opt/app/data/sub-store.json 2>/dev/null || echo "")
-            SUB_COUNT=$(echo "$JSON_CONTENT" | jq '.subscribes | length' 2>/dev/null || echo "0")
-            
-            if [ "$SUB_COUNT" -gt 0 ]; then
-                echo "✅ 后端已成功加载配置 (订阅数: $SUB_COUNT)"
-                echo "$JSON_CONTENT" > "$DATA_DIR/sub-store.json"
-                do_sync_push
-                echo "💤 本轮任务完成，等待下次巡检..."
-                sleep 60
-            else
-                echo "🚨 发现后端数据未加载，执行『API 强灌 + 深度激活』流程..."
-                git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_tmp
-                cp -f backup_tmp/sub-store-nodes/sub-store.json "$ROOT_DIR/snapshot.json"
-                rm -rf backup_tmp
+            # 3. 仓库同步逻辑 (全程使用绝对路径，不使用 cd)
+            if [ "$HAS_UPDATE" = true ]; then
+              echo "🚀 启动同步..."
+              rm -rf "$REPO_DIR"
+              
+              if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git "$REPO_DIR"; then
+                DEST_PATH="$REPO_DIR/sub-store-nodes"
+                mkdir -p "$DEST_PATH"
 
-                if [ -s "$ROOT_DIR/snapshot.json" ]; then
-                   # 1. 物理备份（双保险）
-                   cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /opt/app/data/sub-store.json"
-                   
-                   # 2. 【核心】直接调用 API 导入 JSON 数据包
-                   # 很多时候 API 导入比读取磁盘文件更有效，因为它直接操作内存
-                   echo "📤 正在向 API 端口推送 331KB 核心数据..."
-                   curl -s -X POST "http://127.0.0.1:3000/api/utils/import" \
-                        -H "Content-Type: application/json" \
-                        --data-binary @"$ROOT_DIR/snapshot.json" || echo "⚠️ API 导入请求失败"
-                   
-                   # 3. 深度激活：模拟多个关键路径访问
-                   echo "🔌 触发后端多维激活..."
-                   curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
-                   curl -s "http://127.0.0.1:3000/api/configs" > /dev/null
-                   
-                   # 4. 强制执行同步指令
-                   curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
-                   
-                   echo "✨ 强灌与激活完成，等待后端内存沉淀..."
-                   sleep 30
+                # A. 清理冗余
+                echo "🧹 清理旧文件..."
+                find "$DEST_PATH" -type f ! -name "sub-store.json" -delete 2>/dev/null || true
+                
+                # B. 复制新文件 (使用绝对路径，排除 old_ 开头的文件)
+                echo "📂 写入最新节点..."
+                find "$SUBS_DIR" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
+
+                # C. 同步配置备份
+                if [ -f "$DATA_DIR/sub-store.json" ]; then
+                  cp -f "$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
+                  echo "✅ sub-store.json 备份已更新"
                 fi
+
+                # D. 推送 (仅在提交时进入目录)
+                (
+                  cd "$REPO_DIR"
+                  git config --local user.email "actions@github.com"
+                  git config --local user.name "GitHub Action"
+                  git add .
+                  if ! git diff --cached --quiet; then
+                    git commit -m "自动同步: $(date +'%H:%M:%S')"
+                    git push origin main && echo "🚀 仓库同步成功！"
+                  fi
+                )
+                
+                rm -rf "$REPO_DIR"
+                git rm -r --cached target_repo 2>/dev/null || true
+              fi
+            else
+              echo ">>> 暂无变动"
             fi
+            sleep 60
           done
