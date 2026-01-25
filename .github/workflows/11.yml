@@ -213,12 +213,24 @@ jobs:
           # 4. 进入循环哨兵模式
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
-            # 如果是第一次运行，或者 JSON 发生了变化
-            if [ "$i" -eq 1 ] || ! diff -q "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1; then
-               # 且 JSON 必须是有效的（利用 jq 校验）
-               if [ -s "$DATA_DIR/sub-store.json" ] && jq -e . "$DATA_DIR/sub-store.json" >/dev/null 2>&1; then
-                 do_sync_push
-               fi
+            
+            # --- 关键防护：检查 sub-store.json 是否被“洗”成了空配置 ---
+            # 判断标准：文件必须存在，且大小必须大于你仓库备份的大小（或者给个保底值，如 500 字节）
+            if [ -s "$DATA_DIR/sub-store.json" ] && [ $(stat -c%s "$DATA_DIR/sub-store.json") -gt 300 ]; then
+                
+                # 只有当【真的有变动】且【不是空配置】时才同步
+                if ! diff -q "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
+                   # 再次利用 jq 确保它不是个只有 {} 的空壳
+                   if jq -e '.subscribes | length > 0' "$DATA_DIR/sub-store.json" >/dev/null 2>&1; then
+                     do_sync_push
+                   else
+                     echo "⚠️ 警告：检测到 sub-store.json 订阅列表为空，可能是容器重置，拒绝执行同步！"
+                   fi
+                fi
+            else
+                echo "❌ 严重错误：sub-store.json 丢失或已损坏，尝试从快照恢复..."
+                cp -f "$ROOT_DIR/snapshot.json" "$DATA_DIR/sub-store.json" || true
             fi
+            
             sleep 60
           done
