@@ -40,7 +40,7 @@ jobs:
             -p 3000:3000 -p 3001:3001 xream/sub-store
           sleep 20
 
-       - name: 3. 开启隧道并提取链接
+      - name: 3. 开启隧道并提取链接
         run: |
           # 1. 下载并准备
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
