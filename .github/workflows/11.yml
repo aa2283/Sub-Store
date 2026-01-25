@@ -124,115 +124,44 @@ jobs:
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 初始化路径
+          # 1. 初始化路径 (对齐你的 sub-store-nodes 文件夹)
           ROOT_DIR=$(pwd)
-          DATA_DIR="$ROOT_DIR/sub-store-nodes" 
-          SUBS_DIR="$ROOT_DIR/subs"            # <--- 必须加上这一行
+          DATA_DIR="$ROOT_DIR/sub-store-nodes"
+          SUBS_DIR="$ROOT_DIR/subs"
           REPO_DIR="$ROOT_DIR/target_repo"
-          mkdir -p "$SUBS_DIR"                 # <--- 必须加上这一行
+          mkdir -p "$SUBS_DIR" "$DATA_DIR"
 
-          # 2. 建立初始快照（防止重复推送的关键）
-          [ -f "$DATA_DIR/sub-store.json" ] && cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" || touch "$ROOT_DIR/snapshot.json"
+          # 2. 建立“救命快照” (这是恢复数据的关键)
+          # 如果此时 DATA_DIR 里已经有从仓库拉下来的好配置，立即备份成快照
+          if [ -s "$DATA_DIR/sub-store.json" ]; then
+            cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
+          fi
 
-          # 3. 解析订阅变量
+          # 3. 解析变量 (既然存在，我们就继续用它)
           local_list="${{ vars.SUB_LIST }}"
           readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
-          # 定义核心同步函数
-          do_sync_push() {
-            echo "📢 [$(date +'%H:%M:%S')] 检测到有效变动，启动同步程序..."
-            HAS_REAL_UPDATE=false
-            
-            for line in "${LINES[@]}"; do
-              [[ -z "$line" ]] && continue
-              NAME="${line%%:*}"
-              FORMATS_STR="${line#*:}"
-              IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
-              
-              for fmt in "${FORMATS[@]}"; do
-                fmt=$(echo "$fmt" | tr -d '[:space:]')
-                case $fmt in
-                  yaml) TARGET="ClashMeta" ;;
-                  json) TARGET="Sing-Box" ;;
-                  txt)  TARGET="URI" ;;
-                  *)    TARGET="$fmt" ;;
-                esac
-                
-                FILE_PATH="$SUBS_DIR/$NAME.$fmt"
-                OLD_PATH="$SUBS_DIR/old_$NAME.$fmt"
-                
-                # 执行抓取
-                curl -s "http://127.0.0.1:3000/download/$NAME?target=$TARGET" -o "$FILE_PATH"
-                
-                # --- 参考新脚本：增加“政审”逻辑 ---
-                VALID=false
-                if [ -s "$FILE_PATH" ] && [ $(stat -c%s "$FILE_PATH") -gt 100 ]; then
-                  if [[ "$fmt" == "json" ]] && jq -e . "$FILE_PATH" >/dev/null 2>&1; then VALID=true; fi
-                  if [[ "$fmt" == "yaml" ]] && grep -q "proxies:" "$FILE_PATH"; then VALID=true; fi
-                  if [[ "$fmt" == "txt" ]] && grep -qE "(vmess|ss|vless)://" "$FILE_PATH"; then VALID=true; fi
-                fi
-
-                if [ "$VALID" = true ]; then
-                  if [ ! -f "$OLD_PATH" ] || ! cmp -s "$FILE_PATH" "$OLD_PATH"; then
-                    echo "✅ 捕获变动: $NAME.$fmt"
-                    cp -f "$FILE_PATH" "$OLD_PATH"
-                    HAS_REAL_UPDATE=true
-                  fi
-                else
-                  rm -f "$FILE_PATH" # 剔除无效报错文件
-                fi
-              done
-            done
-
-            if [ "$HAS_REAL_UPDATE" = true ]; then
-              rm -rf "$REPO_DIR"
-              if git clone https://oauth2:${{ secrets.MY_PAT }}@github.com/aa2283/v2ray_configs.git "$REPO_DIR"; then
-                DEST_PATH="$REPO_DIR/sub-store-nodes"
-                mkdir -p "$DEST_PATH"
-                # 清理并写入
-                find "$DEST_PATH" -type f \( -name "*.yaml" -o -name "*.txt" -o -name "*.json" \) ! -name "sub-store.json" -delete
-                find "$SUBS_DIR" -maxdepth 1 -type f ! -name "old_*" -exec cp -f {} "$DEST_PATH/" \;
-                # 备份 JSON
-                cp -f "$DATA_DIR/sub-store.json" "$DEST_PATH/sub-store.json"
-                
-                (
-                  cd "$REPO_DIR"
-                  git config --local user.email "bot@github.com"
-                  git config --local user.name "AutoBot"
-                  git add .
-                  if ! git diff --cached --quiet; then
-                    git commit -m "🔖 自动同步: $(date +'%H:%M:%S')"
-                    git push origin main && echo "🚀 仓库更新成功"
-                  fi
-                )
-                rm -rf "$REPO_DIR"
-              fi
-              # 更新快照，防止死循环
-              cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
-            fi
-          }
-
-          # 4. 进入循环哨兵模式
+          # 4. 哨兵循环
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # --- 关键防护：检查 sub-store.json 是否被“洗”成了空配置 ---
-            # 判断标准：文件必须存在，且大小必须大于你仓库备份的大小（或者给个保底值，如 500 字节）
-            if [ -s "$DATA_DIR/sub-store.json" ] && [ $(stat -c%s "$DATA_DIR/sub-store.json") -gt 300 ]; then
-                
-                # 只有当【真的有变动】且【不是空配置】时才同步
+            # 【核心检查】容器里的配置还在吗？
+            SUB_COUNT=$(jq '.subscribes | length' "$DATA_DIR/sub-store.json" 2>/dev/null || echo "0")
+            
+            if [ "$SUB_COUNT" -gt 0 ]; then
+                # A 方案：配置正常，执行比对并同步
                 if ! diff -q "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
-                   # 再次利用 jq 确保它不是个只有 {} 的空壳
-                   if jq -e '.subscribes | length > 0' "$DATA_DIR/sub-store.json" >/dev/null 2>&1; then
-                     do_sync_push
-                   else
-                     echo "⚠️ 警告：检测到 sub-store.json 订阅列表为空，可能是容器重置，拒绝执行同步！"
-                   fi
+                   do_sync_push # 这里执行具体的 curl 下载逻辑
+                   cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
                 fi
             else
-                echo "❌ 严重错误：sub-store.json 丢失或已损坏，尝试从快照恢复..."
-                cp -f "$ROOT_DIR/snapshot.json" "$DATA_DIR/sub-store.json" || true
+                # B 方案：配置被重置了，强行塞回去！
+                echo "⚠️ 检测到容器重置了配置，正在从快照强行还原..."
+                if [ -f "$ROOT_DIR/snapshot.json" ]; then
+                   cat "$ROOT_DIR/snapshot.json" > "$DATA_DIR/sub-store.json"
+                   sudo chmod 777 "$DATA_DIR/sub-store.json"
+                   echo "♻️ 配置已塞回，下一分钟将重新尝试下载订阅"
+                fi
             fi
-            
             sleep 60
           done
