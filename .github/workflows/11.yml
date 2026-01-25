@@ -144,25 +144,29 @@ jobs:
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # 【关键修改】路径改为 /root/sub-store-data/sub-store.json
-            SUB_COUNT=$(docker exec substore-svc jq '.subscribes | length' /root/sub-store-data/sub-store.json 2>/dev/null || echo "0")
+            # 【核心修改】直接在宿主机检查文件，不进容器了
+            # 这样就能用到 Actions 自带的 jq 了
+            CURRENT_JSON="$DATA_DIR/sub-store.json"
             
-            if [ "$SUB_COUNT" -gt 0 ]; then
-                echo "✅ 容器内配置已就绪 (订阅数: $SUB_COUNT)"
-                do_sync_push
-            else
-                echo "🚨 路径对齐修正：执行向 /root/sub-store-data 的强力注入..."
-                
-                if [ -s "$ROOT_DIR/snapshot.json" ]; then
-                   # 直接打入作者指定的路径
-                   cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
-                   docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
-                   
-                   echo "♻️ 数据已注入正确路径，正在唤醒后端..."
-                   curl -s "http://127.0.0.1:3000/api/utils/backup" > /dev/null || true
+            # 增加 -s 判断，确保文件存在且不为空
+            if [ -s "$CURRENT_JSON" ] && SUB_COUNT=$(jq '.subscribes | length' "$CURRENT_JSON" 2>/dev/null); then
+                if [ "$SUB_COUNT" -gt 0 ]; then
+                    echo "✅ 本地挂载点配置正常 (订阅数: $SUB_COUNT)"
+                    # 执行同步
+                    if ! diff -q "$CURRENT_JSON" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
+                        do_sync_push
+                        cp -f "$CURRENT_JSON" "$ROOT_DIR/snapshot.json"
+                    fi
                 else
-                   echo "❌ 错误：快照为空，无法恢复！"
+                    echo "🚨 配置被洗成了空列表，执行注入..."
+                    cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
+                    sudo chmod 777 "$CURRENT_JSON"
                 fi
+            else
+                echo "🚨 文件不存在或内容损坏，尝试强力还原..."
+                cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
+                sudo chmod 777 "$CURRENT_JSON"
             fi
+            
             sleep 60
           done
