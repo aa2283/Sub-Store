@@ -144,29 +144,32 @@ jobs:
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # 【核心修改】直接在宿主机检查文件，不进容器了
-            # 这样就能用到 Actions 自带的 jq 了
             CURRENT_JSON="$DATA_DIR/sub-store.json"
             
-            # 增加 -s 判断，确保文件存在且不为空
-            if [ -s "$CURRENT_JSON" ] && SUB_COUNT=$(jq '.subscribes | length' "$CURRENT_JSON" 2>/dev/null); then
-                if [ "$SUB_COUNT" -gt 0 ]; then
-                    echo "✅ 本地挂载点配置正常 (订阅数: $SUB_COUNT)"
-                    # 执行同步
-                    if ! diff -q "$CURRENT_JSON" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
-                        do_sync_push
-                        cp -f "$CURRENT_JSON" "$ROOT_DIR/snapshot.json"
-                    fi
-                else
-                    echo "🚨 配置被洗成了空列表，执行注入..."
-                    cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
-                    sudo chmod 777 "$CURRENT_JSON"
+            # 1. 检查订阅数量 (在宿主机环境运行 jq)
+            SUB_COUNT=$(jq '.subscribes | length' "$CURRENT_JSON" 2>/dev/null || echo "0")
+            
+            if [ "$SUB_COUNT" -gt 0 ]; then
+                echo "✅ 配置保持成功 (订阅数: $SUB_COUNT)"
+                # 只有正常时才进行同步比对
+                if ! diff -q "$CURRENT_JSON" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
+                   do_sync_push
+                   cp -f "$CURRENT_JSON" "$ROOT_DIR/snapshot.json"
                 fi
             else
-                echo "🚨 文件不存在或内容损坏，尝试强力还原..."
-                cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
-                sudo chmod 777 "$CURRENT_JSON"
+                echo "🚨 检测到配置被洗空，正在执行物理注入与后端重载..."
+                
+                if [ -f "$ROOT_DIR/snapshot.json" ]; then
+                   # A. 物理覆盖
+                   cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
+                   sudo chmod 777 "$CURRENT_JSON"
+                   
+                   # B. 【关键步骤】通过 API 强制 Sub-Store 重新加载磁盘配置
+                   # 如果后端在内存里是空的，这个命令会尝试触发同步
+                   curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+                   
+                   echo "♻️ 注入完成，等待后端同步数据..."
+                fi
             fi
-            
             sleep 60
           done
