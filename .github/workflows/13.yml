@@ -156,6 +156,7 @@ jobs:
               IFS='|' read -ra FORMATS <<< "$FORMATS_STR"
               
               for fmt in "${FORMATS[@]}"; do
+                fmt="${fmt//$'\r'/}"
                 case $fmt in
                   yaml) TARGET="ClashMeta" ;;
                   json) TARGET="sing-box" ;;
