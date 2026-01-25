@@ -1,16 +1,9 @@
-name: Sub-Store 终极自动化同步 API_URL 最终2
+name: Sub-Store 终极自动化同步 API_URL 最终版
 
 on:
-  workflow_dispatch: # 保留手动启动按钮，方便随时调试
+  workflow_dispatch: 
   schedule:
-    # 这里的 cron 表达式：分钟 小时 日 月 周 (UTC 时间)
-    # 北京时间 08:00 = UTC 00:00
-    # - cron: '0 0 * * *'
-    
-    # 如果你想每 6 小时自动开机加工一次（北京时间 00:00, 06:00, 12:00, 18:00）
-     - cron: '0 */6 * * *'
-
-# ... 后面接你之前的 jobs 部分 ...
+    - cron: '0 */6 * * *' # 每 6 小时运行一次
 
 jobs:
   build:
@@ -22,28 +15,25 @@ jobs:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
           
-      - name: 1-2. 同名恢复备份 (aa2283 专用版)
+      - name: 1-2. 恢复备份并强力赋权
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 建立同名本地虚拟目录
           mkdir -p sub-store-nodes
-          sudo chmod -R 777 sub-store-nodes
-          echo "🔐 权限已强力开启"
-          
           echo "📥 拉取 aa2283/v2ray_configs..."
           git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
           
-          # 1:1 路径提取
           if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
               cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-nodes/sub-store.json
-              echo "✅ 已将仓库中的 sub-store-nodes 配置同步到本地虚拟目录"
+              # 核心：必须在启动前给 777，否则 xream 镜像会因为权限问题重置它
+              sudo chmod -R 777 sub-store-nodes
+              echo "✅ 配置已就绪，大小: $(stat -c%s sub-store-nodes/sub-store.json) 字节"
           else
-              echo "❌ 失败：仓库 sub-store-nodes 目录下未发现 sub-store.json"
+              echo "❌ 失败：仓库未发现 sub-store.json"
               exit 1
           fi
 
-      - name: 2. 启动服务
+      - name: 2. 启动服务 (对齐作者路径)
         run: |
           docker run -d --name substore-svc \
             -v $(pwd)/sub-store-nodes:/root/sub-store-data \
@@ -52,123 +42,106 @@ jobs:
 
       - name: 3. 开启隧道并提取链接
         run: |
-          # 1. 下载并准备
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
           chmod +x cloudflared
-
-          # 2. 启动隧道：去掉 --logfile，改用标准重定向
-          # 这样 cloudflared 的所有实时输出都会进入 backend.log
           nohup ./cloudflared tunnel --url http://127.0.0.1:3000 > backend.log 2>&1 &
           
-          echo "🔄 正在申请隧道域名 (预计 10-30 秒)..."
-          
-          # 3. 循环提取域名
           API_URL=""
           for i in {1..15}; do
-            # 兼容更多字符情况的正则
             API_URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' backend.log | head -n 1)
-            if [ -n "$API_URL" ]; then
-              echo "✅ 成功获取域名！"
-              echo "::add-mask::$API_URL"
-              break
-            fi
-            echo "等待中 ($i/15)..."
+            [ -n "$API_URL" ] && break
             sleep 3
           done
 
-          # 4. 失败处理：如果没提取到，打印日志内容用于排查
           if [ -z "$API_URL" ]; then 
-            echo "❌ 提取链接失败！以下是 backend.log 的最后内容："
             tail -n 20 backend.log
             exit 1 
           fi
-          
-          # 5. 存入环境变量
           echo "FINAL_API_URL=$API_URL" >> $GITHUB_ENV
-          
-          # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
-          
+
       - name: 4. 域名同步至 Cloudflare KV
         env:
-          KV_KEY: "URL_3000" 
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_KV_ID: ${{ secrets.CF_KV_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
         run: |
-          if [ -z "${{ env.FINAL_API_URL }}" ]; then
-            echo "❌ FINAL_API_URL 为空，跳过同步"
-            exit 1
-          fi
-
-          echo "🚀 正在同步域名到 Cloudflare KV, Key: ${{ env.KV_KEY }}"
-          
-          # 执行 PUT 请求
-          RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/storage/kv/namespaces/$CF_KV_ID/values/${{ env.KV_KEY }}" \
+          RESPONSE=$(curl -s -X PUT "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/storage/kv/namespaces/$CF_KV_ID/values/URL_3000" \
             -H "Authorization: Bearer $CF_API_TOKEN" \
             -H "Content-Type: text/plain" \
             --data "${{ env.FINAL_API_URL }}")
+          if echo "$RESPONSE" | grep -q '"success":true'; then echo "✅ KV 同步成功"; else exit 1; fi
 
-          # 【关键修复】使用正则兼容有无空格的情况，并打印原始响应方便排查
-          echo "📡 原始响应: $RESPONSE"
-          
-          if echo "$RESPONSE" | grep -Ei '"success"\s*:\s*true' > /dev/null; then
-            echo "✅ KV 同步成功！"
-          else
-            echo "❌ KV 同步失败，请检查 Token 权限或 ID 是否正确。"
-            exit 1
-          fi
-      # ================== 域名同步模块结束 ==================
-          
-      - name: 5. 精准监听下载链接并实时推送
+      - name: 5. 哨兵监听与冷启动修复
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
-          # 1. 初始化路径 (对齐你的 sub-store-nodes 文件夹)
           ROOT_DIR=$(pwd)
           DATA_DIR="$ROOT_DIR/sub-store-nodes"
           SUBS_DIR="$ROOT_DIR/subs"
           REPO_DIR="$ROOT_DIR/target_repo"
           mkdir -p "$SUBS_DIR" "$DATA_DIR"
 
-          # 2. 建立“救命快照” (这是恢复数据的关键)
-          # 如果此时 DATA_DIR 里已经有从仓库拉下来的好配置，立即备份成快照
-          if [ -s "$DATA_DIR/sub-store.json" ]; then
-            cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
-          fi
+          # 建立快照
+          [ -s "$DATA_DIR/sub-store.json" ] && cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
 
-          # 3. 解析变量 (既然存在，我们就继续用它)
-          local_list="${{ vars.SUB_LIST }}"
-          readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          # 【修正】定义同步函数（原代码缺失部分）
+          do_sync_push() {
+            echo "正在抓取订阅..."
+            local_list="${{ vars.SUB_LIST }}"
+            readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+            
+            # 克隆目标仓库准备推送
+            rm -rf "$REPO_DIR"
+            git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git "$REPO_DIR"
+            
+            for line in "${LINES[@]}"; do
+              [ -z "$line" ] && continue
+              NAME=$(echo $line | cut -d: -f1)
+              FMTS=$(echo $line | cut -d: -f2 | tr '|' ' ')
+              for fmt in $FMTS; do
+                echo "📥 抓取: $NAME (格式: $fmt)"
+                curl -s "http://127.0.0.1:3000/download/$NAME?target=$fmt" -o "$SUBS_DIR/$NAME.$fmt"
+              done
+            done
+            
+            # 拷贝到仓库并推送
+            cp -f "$DATA_DIR/sub-store.json" "$REPO_DIR/sub-store-nodes/sub-store.json"
+            cp -f "$SUBS_DIR"/* "$REPO_DIR/sub-store-nodes/" 2>/dev/null || true
+            
+            cd "$REPO_DIR"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .
+            if ! git diff --cached --quiet; then
+              git commit -m "Automated Sync: $(date +'%Y-%m-%d %H:%M')"
+              git push origin main && echo "🚀 推送成功"
+            else
+              echo "😴 无内容变动，跳过推送"
+            fi
+            cd "$ROOT_DIR"
+          }
 
-          # 4. 进入循环哨兵模式
+          # 哨兵循环
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
-            
             CURRENT_JSON="$DATA_DIR/sub-store.json"
-            
-            # 1. 检查订阅数量 (在宿主机环境运行 jq)
             SUB_COUNT=$(jq '.subscribes | length' "$CURRENT_JSON" 2>/dev/null || echo "0")
             
             if [ "$SUB_COUNT" -gt 0 ]; then
-                echo "✅ 配置保持成功 (订阅数: $SUB_COUNT)"
-                # 只有正常时才进行同步比对
+                echo "✅ 配置正常 (订阅数: $SUB_COUNT)"
                 if ! diff -q "$CURRENT_JSON" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
                    do_sync_push
                    cp -f "$CURRENT_JSON" "$ROOT_DIR/snapshot.json"
                 fi
             else
-                echo "🚨 检测到配置被洗空，正在执行物理注入与后端重载..."
-                
+                echo "🚨 发现重置！执行『冷启动』强推..."
                 if [ -f "$ROOT_DIR/snapshot.json" ]; then
-                   # A. 物理覆盖
+                   docker stop substore-svc || true
                    cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
                    sudo chmod 777 "$CURRENT_JSON"
-                   
-                   # B. 【关键步骤】通过 API 强制 Sub-Store 重新加载磁盘配置
-                   # 如果后端在内存里是空的，这个命令会尝试触发同步
-                   curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
-                   
-                   echo "♻️ 注入完成，等待后端同步数据..."
+                   docker start substore-svc
+                   echo "♻️ 冷重启完成，等待后端就绪..."
+                   sleep 15
                 fi
             fi
             sleep 60
