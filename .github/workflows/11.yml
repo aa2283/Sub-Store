@@ -3,7 +3,7 @@ name: Sub-Store 终极自动化同步 API_URL 最终版
 on:
   workflow_dispatch: 
   schedule:
-    - cron: '0 */6 * * *' # 每 6 小时运行一次
+    #- cron: '0 */6 * * *' # 每 6 小时运行一次
 
 jobs:
   build:
