@@ -144,35 +144,24 @@ jobs:
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # 1. 检查订阅数量
-            SUB_COUNT=$(jq '.subscribes | length' "$DATA_DIR/sub-store.json" 2>/dev/null || echo "0")
+            # 【关键修改】路径改为 /root/sub-store-data/sub-store.json
+            SUB_COUNT=$(docker exec substore-svc jq '.subscribes | length' /root/sub-store-data/sub-store.json 2>/dev/null || echo "0")
             
             if [ "$SUB_COUNT" -gt 0 ]; then
-                echo "✅ 配置保持成功 (订阅数: $SUB_COUNT)"
-                # 只有正常时才进行比对和同步
-                if ! diff -q "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
-                   do_sync_push
-                   cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
-                fi
+                echo "✅ 容器内配置已就绪 (订阅数: $SUB_COUNT)"
+                do_sync_push
             else
-                echo "🚨 警告：容器再次重置了配置！启动紧急修复..."
+                echo "🚨 路径对齐修正：执行向 /root/sub-store-data 的强力注入..."
                 
-                # 【杀手锏】如果连续重置，说明必须重启服务来强制重读配置
-                if [ -f "$ROOT_DIR/snapshot.json" ]; then
-                   # A. 停止那个一直洗数据的容器
-                   docker stop substore-svc || true
+                if [ -s "$ROOT_DIR/snapshot.json" ]; then
+                   # 直接打入作者指定的路径
+                   cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
+                   docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
                    
-                   # B. 在停机状态下强行覆盖配置
-                   cat "$ROOT_DIR/snapshot.json" > "$DATA_DIR/sub-store.json"
-                   sudo chmod 777 "$DATA_DIR/sub-store.json"
-                   
-                   # C. 重新启动容器
-                   docker start substore-svc
-                   
-                   echo "♻️ 容器已重启并强制注入配置，等待后端就绪..."
-                   sleep 10
+                   echo "♻️ 数据已注入正确路径，正在唤醒后端..."
+                   curl -s "http://127.0.0.1:3000/api/utils/backup" > /dev/null || true
                 else
-                   echo "❌ 致命错误：本地快照也是空的，无法复活！"
+                   echo "❌ 错误：快照为空，无法恢复！"
                 fi
             fi
             sleep 60
