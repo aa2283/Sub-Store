@@ -41,7 +41,7 @@ jobs:
           rm -rf backup_repo
           if git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo; then
               if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
-                  cp -f backup_repo/sub-store-nodes/sub-store.json data/sub-store.json
+                  cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-data/sub-store.json
                   echo "✅ 已恢复之前的 Sub-Store 配置"
               else
                   echo "ℹ️ 仓库中未找到备份，将以初始状态启动"
