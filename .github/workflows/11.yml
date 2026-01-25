@@ -15,29 +15,16 @@ jobs:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
           
-      - name: 1-2. 恢复备份并强力赋权
-        env:
-          MY_TOKEN: ${{ secrets.MY_PAT }}
-        run: |
-          mkdir -p sub-store-nodes
-          echo "📥 拉取 aa2283/v2ray_configs..."
-          git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
-          
-          if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
-              cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-nodes/sub-store.json
-              # 核心：必须在启动前给 777，否则 xream 镜像会因为权限问题重置它
-              sudo chmod -R 777 sub-store-nodes
-              echo "✅ 配置已就绪，大小: $(stat -c%s sub-store-nodes/sub-store.json) 字节"
-          else
-              echo "❌ 失败：仓库未发现 sub-store.json"
-              exit 1
-          fi
+      
 
-      - name: 2. 启动服务 (对齐作者路径)
+      - name: 2. 启动服务
         run: |
+          # 建立一个空目录，不放 sub-store.json，防止启动冲突
+          mkdir -p sub-store-nodes
           docker run -d --name substore-svc \
             -v $(pwd)/sub-store-nodes:/root/sub-store-data \
             -p 3000:3000 -p 3001:3001 xream/sub-store
+          echo "⏳ 等待容器初始化..."
           sleep 20
 
       - name: 3. 开启隧道并提取链接
@@ -109,78 +96,45 @@ jobs:
           fi
       # ================== 域名同步模块结束 ==================
 
-      - name: 5. 哨兵监听与冷启动修复
+      - name: 5. 哨兵监听与主动注入
         env:
           MY_TOKEN: ${{ secrets.MY_PAT }}
         run: |
           ROOT_DIR=$(pwd)
           DATA_DIR="$ROOT_DIR/sub-store-nodes"
           SUBS_DIR="$ROOT_DIR/subs"
-          REPO_DIR="$ROOT_DIR/target_repo"
-          mkdir -p "$SUBS_DIR" "$DATA_DIR"
+          mkdir -p "$SUBS_DIR"
 
-          # 建立快照
-          [ -s "$DATA_DIR/sub-store.json" ] && cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
+          # 1. 此时从备份仓库拉取真正的数据到 snapshot.json
+          git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
+          cp -f backup_repo/sub-store-nodes/sub-store.json "$ROOT_DIR/snapshot.json"
+          echo "📸 备份数据已就绪：$(stat -c%s $ROOT_DIR/snapshot.json) 字节"
 
-          # 【修正】定义同步函数（原代码缺失部分）
-          do_sync_push() {
-            echo "正在抓取订阅..."
-            local_list="${{ vars.SUB_LIST }}"
-            readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-            
-            # 克隆目标仓库准备推送
-            rm -rf "$REPO_DIR"
-            git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git "$REPO_DIR"
-            
-            for line in "${LINES[@]}"; do
-              [ -z "$line" ] && continue
-              NAME=$(echo $line | cut -d: -f1)
-              FMTS=$(echo $line | cut -d: -f2 | tr '|' ' ')
-              for fmt in $FMTS; do
-                echo "📥 抓取: $NAME (格式: $fmt)"
-                curl -s "http://127.0.0.1:3000/download/$NAME?target=$fmt" -o "$SUBS_DIR/$NAME.$fmt"
-              done
-            done
-            
-            # 拷贝到仓库并推送
-            cp -f "$DATA_DIR/sub-store.json" "$REPO_DIR/sub-store-nodes/sub-store.json"
-            cp -f "$SUBS_DIR"/* "$REPO_DIR/sub-store-nodes/" 2>/dev/null || true
-            
-            cd "$REPO_DIR"
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add .
-            if ! git diff --cached --quiet; then
-              git commit -m "Automated Sync: $(date +'%Y-%m-%d %H:%M')"
-              git push origin main && echo "🚀 推送成功"
-            else
-              echo "😴 无内容变动，跳过推送"
-            fi
-            cd "$ROOT_DIR"
-          }
-
-          # 哨兵循环
+          # 2. 哨兵循环
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
-            CURRENT_JSON="$DATA_DIR/sub-store.json"
-            SUB_COUNT=$(jq '.subscribes | length' "$CURRENT_JSON" 2>/dev/null || echo "0")
+            
+            # 检查容器内现在的订阅数
+            # 注意：这里直接查容器内部，不看挂载点，因为挂载点可能有延迟
+            SUB_COUNT=$(docker exec substore-svc jq '.subscribes | length' /root/sub-store-data/sub-store.json 2>/dev/null || echo "0")
             
             if [ "$SUB_COUNT" -gt 0 ]; then
-                echo "✅ 配置正常 (订阅数: $SUB_COUNT)"
-                if ! diff -q "$CURRENT_JSON" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
-                   do_sync_push
-                   cp -f "$CURRENT_JSON" "$ROOT_DIR/snapshot.json"
-                fi
+                echo "✅ 容器后端已激活并拥有数据 (订阅数: $SUB_COUNT)"
+                do_sync_push  # 执行正常的同步和抓取
             else
-                echo "🚨 发现重置！执行『冷启动』强推..."
-                if [ -f "$ROOT_DIR/snapshot.json" ]; then
-                   docker stop substore-svc || true
-                   cat "$ROOT_DIR/snapshot.json" > "$CURRENT_JSON"
-                   sudo chmod 777 "$CURRENT_JSON"
-                   docker start substore-svc
-                   echo "♻️ 冷重启完成，等待后端就绪..."
-                   sleep 15
-                fi
+                echo "🚨 发现容器为空，执行【延时注入】策略..."
+                
+                # 直接通过 stdin 注入容器内部路径
+                cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
+                docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
+                
+                echo "💉 注入完成，强制后端重载 API..."
+                # 这里使用两个 API 尝试唤醒
+                curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+                curl -s -X POST "http://127.0.0.1:3000/api/utils/backup" > /dev/null || true
+                
+                echo "♻️ 重载指令已下达，等待 15 秒观察..."
+                sleep 15
             fi
             sleep 60
           done
