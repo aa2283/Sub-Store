@@ -28,6 +28,8 @@ jobs:
         run: |
           # 建立同名本地虚拟目录
           mkdir -p sub-store-nodes
+          sudo chmod -R 777 sub-store-nodes
+          echo "🔐 权限已强力开启"
           
           echo "📥 拉取 aa2283/v2ray_configs..."
           git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
@@ -43,11 +45,11 @@ jobs:
 
       - name: 2. 启动服务 (挂载持久化配置)
         run: |
-          mkdir -p sub-store-data
           docker run -d --name substore-svc \
+            -e "SUB_STORE_FRONTEND_BACKEND_PATH=/ASSET_URL" \
             -v $(pwd)/sub-store-nodes:/opt/sub-store/data \
             -p 3000:3000 -p 3001:3001 xream/sub-store
-          sleep 15
+          sleep 20 # 给容器充足的启动和写盘时间
 
       - name: 3. 开启隧道并提取链接
         run: |
