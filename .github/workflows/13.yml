@@ -214,6 +214,7 @@ jobs:
                 )
                 
                 rm -rf "$REPO_DIR"
+                git rm -r --cached target_repo 2>/dev/null || true
               fi
             else
               echo ">>> 暂无变动"
