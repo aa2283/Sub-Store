@@ -137,22 +137,27 @@ jobs:
                     cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
                 fi
             else
-                echo "🚨 容器当前无有效数据 (当前: $SUB_COUNT)，准备执行热注入..."
+                echo "🚨 容器数据持久化失败 (当前: $SUB_COUNT)，启动『断电注入』程序..."
                 
                 if [ -s "$ROOT_DIR/snapshot.json" ]; then
-                   # 强行灌入
-                   cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
-                   docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
+                   # 1. 强制断电：杀掉容器，防止它在后台搞破坏
+                   docker stop substore-svc || true
                    
-                   # 唤醒后端 API
+                   # 2. 物理锁定：在宿主机修改挂载点文件
+                   cat "$ROOT_DIR/snapshot.json" > "$DATA_DIR/sub-store.json"
+                   sudo chmod 777 "$DATA_DIR/sub-store.json"
+                   echo "💾 磁盘文件已强制锁定 (大小: $(stat -c%s $DATA_DIR/sub-store.json) 字节)"
+                   
+                   # 3. 重新通电：启动容器
+                   docker start substore-svc
+                   
+                   # 4. 强制唤醒：给后端一个指令，让它必须去读磁盘
+                   echo "🚀 正在冷重启动容器..."
+                   sleep 20
                    curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
-                   echo "💉 注入指令已下达，等待后端重载..."
-                   sleep 15
+                   
+                   echo "💉 冷注入指令已下达，观察下一轮巡检..."
                 else
-                   echo "❌ 错误：snapshot.json 为空，无法进行注入"
+                   echo "❌ 错误：snapshot.json 丢失！"
                 fi
             fi
-            
-            echo "💤 巡检结束，休眠中..."
-            sleep 60
-          done
