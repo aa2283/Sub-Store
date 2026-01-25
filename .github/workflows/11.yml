@@ -114,27 +114,35 @@ jobs:
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # 检查容器内现在的订阅数
-            # 注意：这里直接查容器内部，不看挂载点，因为挂载点可能有延迟
-            SUB_COUNT=$(docker exec substore-svc jq '.subscribes | length' /root/sub-store-data/sub-store.json 2>/dev/null || echo "0")
+            # 【核心修改】不在容器内运行 jq
+            # 先把容器里的文件内容导出来，在宿主机用 jq 解析
+            CONTAINER_JSON_CONTENT=$(docker exec substore-svc cat /root/sub-store-data/sub-store.json 2>/dev/null)
+            SUB_COUNT=$(echo "$CONTAINER_JSON_CONTENT" | jq '.subscribes | length' 2>/dev/null || echo "0")
             
             if [ "$SUB_COUNT" -gt 0 ]; then
-                echo "✅ 容器后端已激活并拥有数据 (订阅数: $SUB_COUNT)"
-                do_sync_push  # 执行正常的同步和抓取
+                echo "✅ 注入验证成功！容器内已存在 $SUB_COUNT 个订阅"
+                
+                # 同步到挂载点，确保宿主机 do_sync_push 也能读到最新数据
+                echo "$CONTAINER_JSON_CONTENT" > "$DATA_DIR/sub-store.json"
+                
+                # 执行同步推送逻辑
+                do_sync_push
+                
+                # 更新快照，防止下次重复触发
+                cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
             else
-                echo "🚨 发现容器为空，执行【延时注入】策略..."
+                echo "🚨 容器数据校验不通过，正在执行【热注入】..."
                 
-                # 直接通过 stdin 注入容器内部路径
-                cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
-                docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
-                
-                echo "💉 注入完成，强制后端重载 API..."
-                # 这里使用两个 API 尝试唤醒
-                curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
-                curl -s -X POST "http://127.0.0.1:3000/api/utils/backup" > /dev/null || true
-                
-                echo "♻️ 重载指令已下达，等待 15 秒观察..."
-                sleep 15
+                if [ -s "$ROOT_DIR/snapshot.json" ]; then
+                   # 注入
+                   cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
+                   docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
+                   
+                   # 唤醒
+                   curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+                   echo "💉 注入与唤醒指令已发送，等待 15 秒..."
+                   sleep 15
+                fi
             fi
             sleep 60
           done
