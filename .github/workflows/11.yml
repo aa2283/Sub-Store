@@ -141,26 +141,39 @@ jobs:
           local_list="${{ vars.SUB_LIST }}"
           readarray -t LINES <<< "$(echo "$local_list" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
 
-          # 4. 哨兵循环
+          # 4. 进入循环哨兵模式
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # 【核心检查】容器里的配置还在吗？
+            # 1. 检查订阅数量
             SUB_COUNT=$(jq '.subscribes | length' "$DATA_DIR/sub-store.json" 2>/dev/null || echo "0")
             
             if [ "$SUB_COUNT" -gt 0 ]; then
-                # A 方案：配置正常，执行比对并同步
+                echo "✅ 配置保持成功 (订阅数: $SUB_COUNT)"
+                # 只有正常时才进行比对和同步
                 if ! diff -q "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1 || [ "$i" -eq 1 ]; then
-                   do_sync_push # 这里执行具体的 curl 下载逻辑
+                   do_sync_push
                    cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
                 fi
             else
-                # B 方案：配置被重置了，强行塞回去！
-                echo "⚠️ 检测到容器重置了配置，正在从快照强行还原..."
+                echo "🚨 警告：容器再次重置了配置！启动紧急修复..."
+                
+                # 【杀手锏】如果连续重置，说明必须重启服务来强制重读配置
                 if [ -f "$ROOT_DIR/snapshot.json" ]; then
+                   # A. 停止那个一直洗数据的容器
+                   docker stop substore-svc || true
+                   
+                   # B. 在停机状态下强行覆盖配置
                    cat "$ROOT_DIR/snapshot.json" > "$DATA_DIR/sub-store.json"
                    sudo chmod 777 "$DATA_DIR/sub-store.json"
-                   echo "♻️ 配置已塞回，下一分钟将重新尝试下载订阅"
+                   
+                   # C. 重新启动容器
+                   docker start substore-svc
+                   
+                   echo "♻️ 容器已重启并强制注入配置，等待后端就绪..."
+                   sleep 10
+                else
+                   echo "❌ 致命错误：本地快照也是空的，无法复活！"
                 fi
             fi
             sleep 60
