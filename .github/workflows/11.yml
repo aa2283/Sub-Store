@@ -159,19 +159,29 @@ jobs:
                 do_sync_push
                 sleep 60
             else
-                echo "🚨 发现配置洗空，执行带密钥的热注入..."
+                echo "🚨 数据校验未通过，正在通过 API 强行灌入备份..."
                 git clone --depth 1 https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo_tmp
                 cp -f backup_repo_tmp/sub-store-nodes/sub-store.json "$ROOT_DIR/snapshot.json"
                 rm -rf backup_repo_tmp
 
                 if [ -s "$ROOT_DIR/snapshot.json" ]; then
-                   # A. 物理注入到 /opt/app/data
-                   cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /opt/app/data/sub-store.json"
+                   # 1. 【核心】不再只是改文件，而是直接推送到 API 导入接口
+                   # 注意接口路径：${AUTH_PATH}/api/utils/import
+                   echo "📤 发送导入请求到: http://127.0.0.1:3000${AUTH_PATH}/api/utils/import"
                    
-                   # B. 【核心修改】API 唤醒加入 AUTH_PATH
+                   RESPONSE=$(curl -s -X POST "http://127.0.0.1:3000${AUTH_PATH}/api/utils/import" \
+                        -H "Content-Type: application/json" \
+                        --data-binary @"$ROOT_DIR/snapshot.json")
+                   
+                   echo "📡 后端响应: $RESPONSE"
+
+                   # 2. 补一刀同步指令
                    curl -s -X POST "http://127.0.0.1:3000${AUTH_PATH}/api/utils/sync" > /dev/null || true
-                   echo "💉 已注入并发送带密钥的唤醒指令"
-                   sleep 20
+                   
+                   echo "💉 API 强灌完成，等待后端内存生效..."
+                   sleep 25
+                else
+                   echo "❌ 无法注入：备份文件 snapshot.json 异常"
                 fi
             fi
           done
