@@ -21,36 +21,8 @@ jobs:
         with:
           token: ${{ secrets.MY_PAT }}
           fetch-depth: 0
-          
-      - name: 2. 准备数据并启动服务
-        env:
-          MY_TOKEN: ${{ secrets.MY_PAT }}
-        run: |
-          mkdir -p sub-store-data
-          
-          # 第一步：先拉取备份，把文件放好！
-          echo "📥 正在拉取备份..."
-          git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
-          if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
-              cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-data/sub-store.json
-              echo "✅ 备份文件已到位"
-          fi
-          rm -rf backup_repo
 
-          # 第二步：带着“有货”的目录启动 Docker
-          docker run -d --name substore-svc \
-            -v $(pwd)/sub-store-data:/opt/app/data \
-            -p 3000:3000 -p 3001:3001 xream/sub-store
-          
-          # 第三步：等待 Docker 彻底启动完全
-          sleep 20 
-
-          # 第四步：此时服务里已经有配置了，发送激活指令才有效
-          echo "🚀 正在激活订阅同步..."
-          curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
-          curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
-          
-      - name: 3. 开启隧道并提取链接
+      - name: 2. 开启隧道并提取链接
         run: |
           # 1. 下载并准备
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
@@ -88,7 +60,7 @@ jobs:
           
           # ================== 域名同步模块开始 (建议插入在监听循环之前) ==================
           
-      - name: 4. 域名同步至 Cloudflare KV
+      - name: 3. 域名同步至 Cloudflare KV
         env:
           KV_KEY: "URL_3000" 
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -118,6 +90,36 @@ jobs:
             exit 1
           fi
       # ================== 域名同步模块结束 ==================
+          
+      - name: 4. 准备数据并启动服务
+        env:
+          MY_TOKEN: ${{ secrets.MY_PAT }}
+        run: |
+          mkdir -p sub-store-data
+          
+          # 第一步：先拉取备份，把文件放好！
+          echo "📥 正在拉取备份..."
+          git clone https://x-access-token:${MY_TOKEN}@github.com/aa2283/v2ray_configs.git backup_repo
+          if [ -f "backup_repo/sub-store-nodes/sub-store.json" ]; then
+              cp -f backup_repo/sub-store-nodes/sub-store.json sub-store-data/sub-store.json
+              echo "✅ 备份文件已到位"
+          fi
+          rm -rf backup_repo
+
+          # 第二步：带着“有货”的目录启动 Docker
+          docker run -d --name substore-svc \
+            -v $(pwd)/sub-store-data:/opt/app/data \
+            -p 3000:3000 -p 3001:3001 xream/sub-store
+          
+          # 第三步：等待 Docker 彻底启动完全
+          sleep 20 
+
+          # 第四步：此时服务里已经有配置了，发送激活指令才有效
+          echo "🚀 正在激活订阅同步..."
+          curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
+          curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
+          
+      
           
       - name: 5. 精准监听下载链接并实时推送
         env:
