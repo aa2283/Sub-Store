@@ -114,35 +114,45 @@ jobs:
           for i in {1..15}; do
             echo ">>> 第 $i 次巡检 <<<"
             
-            # 【核心修改】不在容器内运行 jq
-            # 先把容器里的文件内容导出来，在宿主机用 jq 解析
-            CONTAINER_JSON_CONTENT=$(docker exec substore-svc cat /root/sub-store-data/sub-store.json 2>/dev/null)
-            SUB_COUNT=$(echo "$CONTAINER_JSON_CONTENT" | jq '.subscribes | length' 2>/dev/null || echo "0")
+            # 1. 安全地从容器提取内容
+            # 使用 || echo '' 确保即使命令失败，变量也是空的而不是让脚本崩溃
+            CONTAINER_JSON_CONTENT=$(docker exec substore-svc cat /root/sub-store-data/sub-store.json 2>/dev/null || echo "")
+            
+            # 2. 安全检查：只有内容不为空时才交给 jq
+            SUB_COUNT=0
+            if [ -n "$CONTAINER_JSON_CONTENT" ]; then
+                # 即使 jq 解析失败，也强制输出 0 而不崩溃
+                SUB_COUNT=$(echo "$CONTAINER_JSON_CONTENT" | jq '.subscribes | length' 2>/dev/null || echo "0")
+            fi
             
             if [ "$SUB_COUNT" -gt 0 ]; then
                 echo "✅ 注入验证成功！容器内已存在 $SUB_COUNT 个订阅"
                 
-                # 同步到挂载点，确保宿主机 do_sync_push 也能读到最新数据
+                # 物理同步到宿主机挂载点，确保后续 curl 抓取有效
                 echo "$CONTAINER_JSON_CONTENT" > "$DATA_DIR/sub-store.json"
                 
-                # 执行同步推送逻辑
-                do_sync_push
-                
-                # 更新快照，防止下次重复触发
-                cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
+                # 执行你的同步推送函数
+                if [ "$i" -eq 1 ] || ! diff -q "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json" >/dev/null 2>&1; then
+                    do_sync_push
+                    cp -f "$DATA_DIR/sub-store.json" "$ROOT_DIR/snapshot.json"
+                fi
             else
-                echo "🚨 容器数据校验不通过，正在执行【热注入】..."
+                echo "🚨 容器当前无有效数据 (当前: $SUB_COUNT)，准备执行热注入..."
                 
                 if [ -s "$ROOT_DIR/snapshot.json" ]; then
-                   # 注入
+                   # 强行灌入
                    cat "$ROOT_DIR/snapshot.json" | docker exec -i substore-svc sh -c "cat > /root/sub-store-data/sub-store.json"
                    docker exec substore-svc chmod 777 /root/sub-store-data/sub-store.json
                    
-                   # 唤醒
+                   # 唤醒后端 API
                    curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
-                   echo "💉 注入与唤醒指令已发送，等待 15 秒..."
+                   echo "💉 注入指令已下达，等待后端重载..."
                    sleep 15
+                else
+                   echo "❌ 错误：snapshot.json 为空，无法进行注入"
                 fi
             fi
+            
+            echo "💤 巡检结束，休眠中..."
             sleep 60
           done
