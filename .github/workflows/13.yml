@@ -112,7 +112,7 @@ jobs:
             -p 3000:3000 -p 3001:3001 xream/sub-store
           
           # 第三步：等待 Docker 彻底启动完全
-          sleep 20 
+          sleep 10 
 
           # 第四步：此时服务里已经有配置了，发送激活指令才有效
           echo "🚀 正在激活订阅同步..."
@@ -141,7 +141,7 @@ jobs:
           curl -s "http://127.0.0.1:3000/api/subscribes" > /dev/null
           curl -s -X POST "http://127.0.0.1:3000/api/utils/sync" > /dev/null || true
                 
-          sleep 30
+           30
 
           for i in {1..15}
           do
@@ -177,7 +177,6 @@ jobs:
                   fi
                 fi
               done
-            done
 
             # 3. 仓库同步逻辑 (全程使用绝对路径，不使用 cd)
             if [ "$HAS_UPDATE" = true ]; then
