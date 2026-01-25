@@ -43,13 +43,12 @@ jobs:
               exit 1
           fi
 
-      - name: 2. 启动服务 (挂载持久化配置)
+      - name: 2. 启动服务
         run: |
           docker run -d --name substore-svc \
-            -e "SUB_STORE_FRONTEND_BACKEND_PATH=/ASSET_URL" \
-            -v $(pwd)/sub-store-nodes:/opt/sub-store/data \
+            -v $(pwd)/sub-store-nodes:/root/sub-store-data \
             -p 3000:3000 -p 3001:3001 xream/sub-store
-          sleep 20 # 给容器充足的启动和写盘时间
+          sleep 20
 
       - name: 3. 开启隧道并提取链接
         run: |
