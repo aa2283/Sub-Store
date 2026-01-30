@@ -176,6 +176,17 @@ jobs:
                     HAS_UPDATE=true
                   fi
                 fi
+
+                SUB_STORE_JSON="$DATA_DIR/sub-store.json"
+               OLD_SUB_STORE_JSON="$DATA_DIR/old_sub-store.json"
+
+              if [ -f "$SUB_STORE_JSON" ]; then
+              if [ ! -f "$OLD_SUB_STORE_JSON" ] || ! cmp -s "$SUB_STORE_JSON" "$OLD_SUB_STORE_JSON"; then
+              echo "📢 sub-store.json 发生变动"
+              cp -f "$SUB_STORE_JSON" "$OLD_SUB_STORE_JSON"
+              HAS_UPDATE=true
+             fi
+           fi
               done
             done
 
